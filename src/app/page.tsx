@@ -309,43 +309,11 @@ function DashboardView() {
   const {
     mayoristaActivo,
     setCurrentView,
-    setMayoristaActivo,
     pedidoItems,
     productos,
   } = useMayolistaStore();
-  const [mayoristas, setMayoristas] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function load() {
-      try {
-        const res = await fetch("/api/mayoristas");
-        if (res.ok) {
-          const data = await res.json();
-          setMayoristas(data);
-          if (data.length > 0 && data[0].activo) {
-            setMayoristaActivo(data[0]);
-          }
-        }
-      } catch {
-        /* ignore */
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
-  }, []);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
-      </div>
-    );
-  }
-
-  const totalItems = productos.length;
   const pedidoCount = pedidoItems.length;
+  const totalItems = productos.length;
 
   return (
     <div className="animate-fade-in-up space-y-6">
@@ -453,40 +421,19 @@ function DashboardView() {
         </div>
       </div>
 
-      {/* Recent wholesalers */}
-      {mayoristas.length > 0 && (
-        <div className="space-y-3">
-          <h3 className="font-semibold text-lg">Mayoristas recientes</h3>
-          <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-thin">
-            {mayoristas.map((m: any) => (
-              <button
-                key={m.id}
-                onClick={() => {
-                  setMayoristaActivo(m);
-                  setCurrentView("buscar");
-                }}
-                className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
-                  m.activo
-                    ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/20"
-                    : "bg-card hover:border-emerald-200"
-                }`}
-              >
-                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center text-white">
-                  <Store className="w-5 h-5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-sm truncate">{m.nombre}</p>
-                  <p className="text-xs text-muted-foreground">{m.rubro}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs font-medium">{m._count?.productos || 0} prod.</p>
-                  {m.activo && (
-                    <span className="text-[10px] text-emerald-600 font-medium">ACTIVO</span>
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
+      {/* Recent wholesalers - loaded on demand */}
+      {!mayoristaActivo && (
+        <div className="space-y-3 p-4 rounded-xl border bg-card">
+          <p className="text-sm text-muted-foreground text-center">
+            🔔 Configurá tu primer mayorista para empezar a armar pedidos
+          </p>
+          <button
+            onClick={() => setCurrentView("mayorista")}
+            className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold hover:from-emerald-600 hover:to-emerald-700 transition-all flex items-center justify-center gap-2"
+          >
+            <Store className="w-5 h-5" />
+            Configurar mayorista
+          </button>
         </div>
       )}
     </div>
