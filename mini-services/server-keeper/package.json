@@ -1,0 +1,7 @@
+{
+  "name": "server-keeper",
+  "scripts": {
+    "dev": "bun --hot index.ts"
+  },
+  "dependencies": {}
+}
