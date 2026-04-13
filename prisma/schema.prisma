@@ -1,0 +1,90 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String     @id @default(cuid())
+  githubId      String     @unique
+  email         String     @unique
+  name          String
+  avatarUrl     String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  mayoristas    Mayorista[]
+  clientes      Cliente[]
+  pedidos       Pedido[]
+}
+
+model Mayorista {
+  id          String    @id @default(cuid())
+  nombre      String
+  rubro       String
+  userId      String
+  activo      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productos   Producto[]
+  pedidos     Pedido[]
+}
+
+model Producto {
+  id          String    @id @default(cuid())
+  codigo      String
+  descripcion String
+  precio      Float
+  mayoristaId String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  mayorista   Mayorista @relation(fields: [mayoristaId], references: [id], onDelete: Cascade)
+  pedidos     PedidoItem[]
+}
+
+model Cliente {
+  id          String    @id @default(cuid())
+  nombre      String
+  telefono    String?
+  email       String?
+  direccion   String?
+  userId      String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pedidos     Pedido[]
+}
+
+model Pedido {
+  id            String        @id @default(cuid())
+  numero        String
+  observaciones String?
+  estado        String        @default("borrador")
+  descuentoPct  Float         @default(0)
+  userId        String
+  clienteId     String?
+  mayoristaId   String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cliente       Cliente?      @relation(fields: [clienteId], references: [id], onDelete: SetNull)
+  mayorista     Mayorista     @relation(fields: [mayoristaId], references: [id])
+  items         PedidoItem[]
+}
+
+model PedidoItem {
+  id            String  @id @default(cuid())
+  cantidad      Int
+  cantidadRegalo Int    @default(0)
+  precioUnitario Float
+  descuentoPct  Float   @default(0)
+  pedidoId      String
+  productoId    String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  pedido        Pedido  @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  producto      Producto @relation(fields: [productoId], references: [id])
+}
