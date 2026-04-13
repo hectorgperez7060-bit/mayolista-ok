@@ -35,7 +35,6 @@ import {
   Download,
 } from "lucide-react";
 import { useMayolistaStore } from "@/lib/store";
-import { signIn, signOut, useSession } from "next-auth/react";
 import { toast } from "sonner";
 import Fuse from "fuse.js";
 
@@ -52,12 +51,16 @@ function LoginView() {
     }
     setLoading(true);
     try {
-      const result = await signIn("credentials", {
-        name: nombre.trim(),
-        email: email.trim(),
-        redirect: false,
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: nombre.trim(), email: email.trim() }),
       });
-      if (result?.error) {
+      if (res.ok) {
+        const data = await res.json();
+        useMayolistaStore.getState().setUser(data.user);
+        toast.success(`¡Bienvenido, ${data.user.name}!`);
+      } else {
         toast.error("Error al iniciar sesión");
       }
     } catch {
@@ -164,11 +167,11 @@ function LoginView() {
 // ==================== HEADER ====================
 function AppHeader() {
   const { user, currentView, setCurrentView, mayoristaActivo } = useMayolistaStore();
-  const { data: session } = useSession();
+
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const handleLogout = async () => {
-    await signOut({ redirect: false });
+  const handleLogout = () => {
+    useMayolistaStore.getState().setUser(null);
   };
 
   const navItems = [
@@ -221,7 +224,7 @@ function AppHeader() {
         {/* User menu */}
         <div className="flex items-center gap-2">
           <span className="hidden sm:block text-sm font-medium text-muted-foreground">
-            {user?.name || session?.user?.name}
+            {user?.name}
           </span>
           <button
             onClick={handleLogout}
@@ -1993,38 +1996,9 @@ function Save({ className }: { className?: string }) {
 
 // ==================== MAIN APP ====================
 export default function Home() {
-  const { data: session, status } = useSession();
-  const { currentView, user, setUser } = useMayolistaStore();
+  const { currentView, user } = useMayolistaStore();
 
-  // Sync session with store
-  useEffect(() => {
-    if (session?.user) {
-      setUser({
-        id: (session.user as any).id,
-        name: session.user.name,
-        email: session.user.email,
-      });
-    }
-  }, [session?.user, setUser]);
-
-  if (status === "loading") {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <motion.div
-          initial={{ scale: 0.8, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          className="text-center"
-        >
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-400 to-emerald-600 shadow-xl shadow-emerald-200 dark:shadow-emerald-900/30 mb-4">
-            <img src="/logo-mayolista.png" alt="" className="w-10 h-10 rounded-xl" />
-          </div>
-          <Loader2 className="w-6 h-6 text-emerald-500 animate-spin mx-auto" />
-        </motion.div>
-      </div>
-    );
-  }
-
-  if (!session) {
+  if (!user) {
     return <LoginView />;
   }
 
