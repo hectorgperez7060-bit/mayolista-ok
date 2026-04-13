@@ -44,30 +44,23 @@ function LoginView() {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = async () => {
+  const handleLogin = () => {
     if (!nombre.trim() || !email.trim()) {
       toast.error("Completá tu nombre y email");
       return;
     }
-    setLoading(true);
-    try {
-      const res = await fetch("/api/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: nombre.trim(), email: email.trim() }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        useMayolistaStore.getState().setUser(data.user);
-        toast.success(`¡Bienvenido, ${data.user.name}!`);
-      } else {
-        toast.error("Error al iniciar sesión");
-      }
-    } catch {
-      toast.error("Error de conexión");
-    } finally {
-      setLoading(false);
-    }
+    // Login directo sin servidor - no se cae
+    useMayolistaStore.getState().setUser({
+      id: "usr_" + Date.now(),
+      name: nombre.trim(),
+      email: email.trim(),
+    });
+    localStorage.setItem("mayolista_user", JSON.stringify({
+      id: "usr_" + Date.now(),
+      name: nombre.trim(),
+      email: email.trim(),
+    }));
+    toast.success(`¡Bienvenido, ${nombre.trim()}!`);
   };
 
   return (
@@ -171,6 +164,7 @@ function AppHeader() {
   const [menuOpen, setMenuOpen] = useState(false);
 
   const handleLogout = () => {
+    localStorage.removeItem("mayolista_user");
     useMayolistaStore.getState().setUser(null);
   };
 
@@ -1996,7 +1990,19 @@ function Save({ className }: { className?: string }) {
 
 // ==================== MAIN APP ====================
 export default function Home() {
-  const { currentView, user } = useMayolistaStore();
+  const { currentView, user, setUser } = useMayolistaStore();
+
+  // Recuperar usuario guardado en localStorage
+  useEffect(() => {
+    if (!user) {
+      try {
+        const saved = localStorage.getItem("mayolista_user");
+        if (saved) {
+          setUser(JSON.parse(saved));
+        }
+      } catch { /* ignore */ }
+    }
+  }, [user, setUser]);
 
   if (!user) {
     return <LoginView />;
