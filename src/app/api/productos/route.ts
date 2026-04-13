@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+
+// Helper to get userId from header
+function getUserId(req: NextRequest): string | null {
+  return req.headers.get("x-user-id");
+}
 
 // GET - Obtener productos del mayorista
 export async function GET(req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
+    const userId = getUserId(req);
+    if (!userId) {
       return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
 
-    const userId = (session.user as any).id;
     const { searchParams } = new URL(req.url);
     const mayoristaId = searchParams.get("mayoristaId");
     const query = searchParams.get("q") || "";
@@ -54,12 +56,11 @@ export async function GET(req: NextRequest) {
 // POST - Cargar productos (lista completa, reemplaza anterior)
 export async function POST(req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user) {
+    const userId = getUserId(req);
+    if (!userId) {
       return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
 
-    const userId = (session.user as any).id;
     const body = await req.json();
     const { mayoristaId, productos } = body;
 

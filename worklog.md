@@ -1,40 +1,27 @@
-# Mayolista-OK Worklog
-
 ---
 Task ID: 1
-Agent: Main
-Task: Build complete Mayolista-OK wholesale price list management application
+Agent: Main Agent
+Task: Configure Mayolista-OK for deployment to Vercel with Neon PostgreSQL
 
 Work Log:
-- Installed dependencies: xlsx (Excel parsing), fuse.js (fuzzy search)
-- Created Prisma schema with models: User, Mayorista, Producto, Cliente, Pedido, PedidoItem
-- Pushed schema to SQLite database
-- Set up NextAuth with Credentials provider (GitHub-style login)
-- Created Zustand store for client state management
-- Created TypeScript type definitions
-- Built API routes: /api/mayoristas, /api/productos, /api/clientes, /api/pedidos, /api/auth/[...nextauth]
-- Built complete SPA frontend with views:
-  - LoginView: GitHub-branded login with name/email
-  - DashboardView: Mayorista info, quick stats, actions
-  - MayoristaView: Create mayorista, upload Excel/CSV lists
-  - BuscarView: Fuzzy product search with Fuse.js, qty/gift/discount per item
-  - PedidoView: Order builder with line controls, global discount, share options
-  - ClientesView: Client CRUD, select client for order
-  - HistorialView: Past orders with expandable details
-- Generated logo with AI image generation
-- Created custom emerald green color theme
-- Built responsive layout with header, mobile bottom nav, sticky footer
-- Implemented share functionality: WhatsApp, Email, Excel, CSV, PDF/Print
-- All text in Spanish (Latin America/Argentina style)
-- Fixed useState → useEffect for proper lifecycle hooks
-- Clean ESLint output
+- Analyzed user's Supabase screenshots - found connection info in "Connect to your project" dialog
+- User couldn't find connection string in Supabase new UI
+- Recommended Neon as alternative - user created project "mayolista-ok" on neon.tech
+- User provided Neon connection string: postgresql://neondb_owner:npg_YDJoQIc9Xay3@ep-floral-grass-amb75w35.c-5.us-east-1.aws.neon.tech/neondb?sslmode=require
+- Updated prisma/schema.prisma: switched from SQLite to PostgreSQL with Neon directUrl support
+- Updated src/lib/db.ts: configured Prisma client for Neon
+- Rewrote src/app/api/login/route.ts: now creates/finds user in DB and returns real userId
+- Removed NextAuth entirely (src/app/api/auth/ and src/lib/auth.ts deleted)
+- Rewrote all API routes (mayoristas, productos, pedidos, clientes) to use x-user-id header auth instead of NextAuth sessions
+- Updated src/app/page.tsx: added authHeaders() helper, updated login to call API, added x-user-id header to ALL fetch calls (10 total)
+- Created .env.local and .env with Neon connection string
+- Successfully ran `prisma db push` - tables created in Neon database
+- Created DEPLOY.md with step-by-step deployment guide
+- Updated .gitignore
 
 Stage Summary:
-- Full application built and running at localhost:3000
-- Database configured with all required models
-- Authentication system working
-- Excel/CSV upload with automatic column detection
-- Fuzzy search with Fuse.js for predictive results
-- Complete order management with special calculations (cajas+regalo, % descuento)
-- Share to WhatsApp, Email, Excel, CSV, PDF
-- Mobile-first responsive design
+- Database connected and working (Neon PostgreSQL)
+- Auth system simplified: localStorage + x-user-id header (no NextAuth needed)
+- All API routes updated and tested for schema compatibility
+- Project ready for GitHub upload and Vercel deployment
+- Key env vars: DATABASE_URL (with pgbouncer), DIRECT_URL (for migrations)

@@ -3,16 +3,15 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
   id            String     @id @default(cuid())
-  githubId      String     @unique
   email         String     @unique
   name          String
-  avatarUrl     String?
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
   mayoristas    Mayorista[]
@@ -64,6 +63,7 @@ model Pedido {
   observaciones String?
   estado        String        @default("borrador")
   descuentoPct  Float         @default(0)
+  total         Float         @default(0)
   userId        String
   clienteId     String?
   mayoristaId   String
@@ -76,15 +76,15 @@ model Pedido {
 }
 
 model PedidoItem {
-  id            String  @id @default(cuid())
-  cantidad      Int
-  cantidadRegalo Int    @default(0)
-  precioUnitario Float
-  descuentoPct  Float   @default(0)
-  pedidoId      String
-  productoId    String
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  pedido        Pedido  @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
-  producto      Producto @relation(fields: [productoId], references: [id])
+  id              String    @id @default(cuid())
+  cantidad        Int
+  cantidadRegalo  Int       @default(0)
+  precioUnitario  Float
+  descuentoPct    Float     @default(0)
+  pedidoId        String
+  productoId      String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  pedido          Pedido    @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  producto        Producto  @relation(fields: [productoId], references: [id])
 }

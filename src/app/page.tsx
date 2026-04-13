@@ -38,29 +38,60 @@ import { useMayolistaStore } from "@/lib/store";
 import { toast } from "sonner";
 import Fuse from "fuse.js";
 
+// Helper to get auth headers for API calls
+function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  if (typeof window === "undefined") return { ...extra };
+  const stored = localStorage.getItem("mayolista_user");
+  const headers: Record<string, string> = { ...extra };
+  if (stored) {
+    try {
+      const user = JSON.parse(stored);
+      if (user?.id) headers["x-user-id"] = user.id;
+    } catch { /* ignore */ }
+  }
+  return headers;
+}
+
+function getUserId(): string | null {
+  if (typeof window === "undefined") return null;
+  const stored = localStorage.getItem("mayolista_user");
+  if (stored) {
+    try { return JSON.parse(stored)?.id || null; } catch { return null; }
+  }
+  return null;
+}
+
 // ==================== LOGIN VIEW ====================
 function LoginView() {
   const [nombre, setNombre] = useState("");
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (!nombre.trim() || !email.trim()) {
       toast.error("Completá tu nombre y email");
       return;
     }
-    // Login directo sin servidor - no se cae
-    useMayolistaStore.getState().setUser({
-      id: "usr_" + Date.now(),
-      name: nombre.trim(),
-      email: email.trim(),
-    });
-    localStorage.setItem("mayolista_user", JSON.stringify({
-      id: "usr_" + Date.now(),
-      name: nombre.trim(),
-      email: email.trim(),
-    }));
-    toast.success(`¡Bienvenido, ${nombre.trim()}!`);
+    setLoading(true);
+    try {
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: nombre.trim(), email: email.trim() }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        useMayolistaStore.getState().setUser(data.user);
+        localStorage.setItem("mayolista_user", JSON.stringify(data.user));
+        toast.success(`¡Bienvenido, ${nombre.trim()}!`);
+      } else {
+        toast.error("Error al iniciar sesión");
+      }
+    } catch {
+      toast.error("Error de conexión");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -477,7 +508,7 @@ function MayoristaView() {
     try {
       const res = await fetch("/api/mayoristas", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({ nombre: nombre.trim(), rubro }),
       });
       if (res.ok) {
@@ -521,7 +552,7 @@ function MayoristaView() {
 
       const res = await fetch("/api/productos", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({
           mayoristaId: currentMayoristaId,
           productos: jsonData,
@@ -533,7 +564,7 @@ function MayoristaView() {
         toast.success(`${data.total} productos cargados correctamente`);
 
         // Set as active mayorista
-        const mayoristaRes = await fetch("/api/mayoristas");
+        const mayoristaRes = await fetch("/api/mayoristas", { headers: authHeaders() });
         if (mayoristaRes.ok) {
           const mayoristas = await mayoristaRes.json();
           const active = mayoristas.find((m: any) => m.id === currentMayoristaId);
@@ -746,7 +777,7 @@ function BuscarView() {
     async function load() {
       if (!mayoristaActivo?.id) return;
       try {
-        const res = await fetch(`/api/productos?mayoristaId=${mayoristaActivo.id}`);
+        const res = await fetch(`/api/productos?mayoristaId=${mayoristaActivo.id}`, { headers: authHeaders() });
         if (res.ok) {
           const data = await res.json();
           setProductos(data);
@@ -763,7 +794,8 @@ function BuscarView() {
     setLoading(true);
     try {
       const res = await fetch(
-        `/api/productos?mayoristaId=${mayoristaActivo.id}&q=${encodeURIComponent(query)}`
+        `/api/productos?mayoristaId=${mayoristaActivo.id}&q=${encodeURIComponent(query)}`,
+        { headers: authHeaders() }
       );
       if (res.ok) {
         const data = await res.json();
@@ -1150,7 +1182,7 @@ function PedidoView() {
     try {
       const res = await fetch("/api/pedidos", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({
           clienteId: clienteActivo?.id || null,
           mayoristaId: mayoristaActivo?.id,
@@ -1578,7 +1610,7 @@ function ClientesView() {
 
   const loadClientes = async () => {
     try {
-      const res = await fetch("/api/clientes");
+      const res = await fetch("/api/clientes", { headers: authHeaders() });
       if (res.ok) setClientes(await res.json());
     } catch {
       /* ignore */
@@ -1597,7 +1629,7 @@ function ClientesView() {
     try {
       const res = await fetch("/api/clientes", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({
           nombre: nombre.trim(),
           telefono: telefono.trim() || null,
@@ -1787,7 +1819,7 @@ function HistorialView() {
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch("/api/pedidos");
+        const res = await fetch("/api/pedidos", { headers: authHeaders() });
         if (res.ok) setPedidos(await res.json());
       } catch {
         /* ignore */
