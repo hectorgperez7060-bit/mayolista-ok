@@ -536,47 +536,145 @@ function MayoristaView() {
     setUploadProgress("Leyendo archivo...");
 
     try {
+      // Step 1: Read Excel in the browser
       const XLSX = await import("xlsx");
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
-      const sheetName = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[sheetName];
-      const jsonData = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
 
-      if (jsonData.length === 0) {
+      if (rows.length === 0) {
         toast.error("El archivo está vacío");
         setUploading(false);
         return;
       }
 
-      setUploadProgress(`Procesando ${jsonData.length} filas...`);
+      // Step 2: Process in the browser - map columns
+      setUploadProgress(`Procesando ${rows.length} filas...`);
 
-      const res = await fetch("/api/productos", {
+      const keys = Object.keys(rows[0]);
+      const products: { codigo: string; descripcion: string; precio: number }[] = [];
+
+      for (const raw of rows) {
+        // Find description = column with longest text
+        let descKey: string | null = null;
+        let longestTextLen = 0;
+        for (const k of keys) {
+          const val = String(raw[k] || "").trim();
+          if (val.length > longestTextLen && val.length > 3) {
+            longestTextLen = val.length;
+            descKey = k;
+          }
+        }
+
+        // Find numeric columns
+        const numericCols: { key: string; value: number; name: string }[] = [];
+        for (const k of keys) {
+          if (k === descKey) continue;
+          if (typeof raw[k] === "number" && raw[k] > 0) {
+            numericCols.push({ key: k, value: raw[k], name: k.toLowerCase() });
+          }
+        }
+
+        // Find precio - prefer "$ unit"
+        let precioKey: string | null = null;
+        for (const col of numericCols) {
+          if (col.name.includes("$ unit") || col.name.includes("preciounitario")) {
+            precioKey = col.key;
+            break;
+          }
+        }
+
+        // Find codigo - remaining numeric
+        let codigoKey: string | null = null;
+        for (const col of numericCols) {
+          if (col.key !== precioKey && !codigoKey) {
+            codigoKey = col.key;
+          }
+        }
+
+        const codigo = codigoKey ? String(raw[codigoKey] || "").trim() : "";
+        const descripcion = descKey ? String(raw[descKey] || "").trim() : "";
+        const precio = precioKey ? (Number(raw[precioKey]) || 0) : 0;
+
+        if (!descripcion && !codigo) continue;
+        if (!codigo && precio === 0 && descripcion.includes(";")) continue;
+
+        products.push({ codigo, descripcion: descripcion || codigo, precio });
+      }
+
+      if (products.length === 0) {
+        toast.error("No se encontraron productos en el archivo");
+        setUploading(false);
+        return;
+      }
+
+      // Step 3: Send in chunks of 300 (each chunk takes ~2-3 seconds)
+      const CHUNK_SIZE = 300;
+      const totalChunks = Math.ceil(products.length / CHUNK_SIZE);
+      let totalLoaded = 0;
+
+      // First chunk: delete old + insert first batch
+      setUploadProgress(`Enviando lote 1 de ${totalChunks}...`);
+
+      const firstChunk = products.slice(0, CHUNK_SIZE);
+      const firstRes = await fetch("/api/productos", {
         method: "POST",
-        headers: authHeaders(),
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           mayoristaId: currentMayoristaId,
-          productos: jsonData,
+          productos: firstChunk,
+          replace: true, // delete old products
         }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        toast.success(`✅ ${data.total} productos cargados. ${data.skipped ? `${data.skipped} filas sin datos.` : ""}`);
-        setUploadProgress(`¡${data.total} productos listos!`);
+      if (!firstRes.ok) {
+        const err = await firstRes.text();
+        toast.error("Error: " + err);
+        setUploading(false);
+        setUploadProgress("");
+        return;
+      }
 
-        // Set as active mayorista
-        const mayoristaRes = await fetch("/api/mayoristas", { headers: authHeaders() });
-        if (mayoristaRes.ok) {
-          const mayoristas = await mayoristaRes.json();
-          const active = mayoristas.find((m: any) => m.id === currentMayoristaId);
-          if (active) {
-            setMayoristaActivo(active);
-            setCurrentView("buscar");
-          }
+      totalLoaded += firstChunk.length;
+      setUploadProgress(`${totalLoaded} de ${products.length} productos...`);
+
+      // Remaining chunks
+      for (let i = 1; i < totalChunks; i++) {
+        const chunk = products.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+        setUploadProgress(`Enviando lote ${i + 1} de ${totalChunks} (${totalLoaded} cargados)...`);
+
+        const chunkRes = await fetch("/api/productos", {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            mayoristaId: currentMayoristaId,
+            productos: chunk,
+            replace: false, // don't delete, just add
+          }),
+        });
+
+        if (!chunkRes.ok) {
+          toast.error(`Error en lote ${i + 1}, se cargaron ${totalLoaded} productos`);
+          break;
         }
-      } else {
-        toast.error("Error al cargar: " + (await res.text()));
+
+        totalLoaded += chunk.length;
+        setUploadProgress(`${totalLoaded} de ${products.length} productos...`);
+      }
+
+      toast.success(`✅ ${totalLoaded} productos cargados OK`);
+      setUploadProgress(`¡${totalLoaded} productos listos!`);
+
+      // Set as active mayorista
+      const mayoristaRes = await fetch("/api/mayoristas", { headers: authHeaders() });
+      if (mayoristaRes.ok) {
+        const mayoristas = await mayoristaRes.json();
+        const active = mayoristas.find((m: any) => m.id === currentMayoristaId);
+        if (active) {
+          setMayoristaActivo(active);
+          setCurrentView("buscar");
+        }
       }
     } catch (error) {
       console.error(error);
