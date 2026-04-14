@@ -31,3 +31,20 @@ Stage Summary:
 - Auto-restore: mayorista and products reload from DB on app startup
 - Voice search triggers client-side filter automatically
 - Clean professional UI with no confusing images
+---
+Task ID: 1
+Agent: Main Agent
+Task: Pushear código pendiente a GitHub para desplegar fixes en Vercel
+
+Work Log:
+- Verificado que existía un commit sin pushear (629a204) con múltiples fixes
+- Confirmado que NO hay imágenes de gato ni referencias a mascotas en el código
+- Pusheado exitosamente a origin/main: f6b5b52..629a204
+- Verificado que lint pasa sin errores
+- Código revisado: login, auto-restauración de sesión, búsqueda client-side, carga de productos
+
+Stage Summary:
+- El código con todos los fixes (persistencia, búsqueda, voz, UI) estaba en sandbox pero NUNCA fue pusheado a GitHub
+- Esto explica por qué Vercel seguía mostrando la versión vieja con bugs
+- Push completado: GitHub → Vercel deployment automático
+- Lint: OK (sin errores)
