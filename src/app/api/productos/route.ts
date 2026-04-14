@@ -11,7 +11,7 @@ function mapProductData(raw: any): { codigo: string; descripcion: string; precio
   const keys = Object.keys(raw);
   if (keys.length === 0) return null;
 
-  // Normalize all keys to lowercase for matching
+  // Normalize all keys to lowercase without accents for matching
   const normalizedKeys: Record<string, string> = {};
   for (const k of keys) {
     normalizedKeys[k.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")] = k;
@@ -44,7 +44,7 @@ function mapProductData(raw: any): { codigo: string; descripcion: string; precio
   }
 
   // Try to find precio column
-  const precioPatterns = ["precio", "price", "pr unit", "pr unitario", "precio_lista", "preciounitario", "punit", "precio_unitario", "valor", "costo", "importe", "pvp", "pr"];
+  const precioPatterns = ["precio", "price", "pr unit", "pr unitario", "precio_lista", "preciounitario", "punit", "precio_unitario", "valor", "costo", "importe", "pvp", "$ unit", "$unit"];
   let precioKey: string | null = null;
   for (const pattern of precioPatterns) {
     for (const [norm, original] of Object.entries(normalizedKeys)) {
@@ -56,44 +56,65 @@ function mapProductData(raw: any): { codigo: string; descripcion: string; precio
     if (precioKey) break;
   }
 
-  // If no columns found, try positional (first = codigo, second = descripcion, third = precio)
-  if (!codigoKey && !descKey && !precioKey) {
-    if (keys.length >= 2) {
+  // If no columns found by name, try positional detection:
+  // Check if first column has numeric values (codigo) and second has text (descripcion)
+  if (!codigoKey && !descKey && !precioKey && keys.length >= 2) {
+    // Check for "__EMPTY" key (common in Excel exports)
+    const emptyKey = keys.find(k => k === "__EMPTY" || k.toLowerCase().includes("empty"));
+    // Check first column - if it has numbers, it's likely codigo
+    const firstVal = raw[keys[0]];
+    if (typeof firstVal === "number") {
       codigoKey = keys[0];
-      descKey = keys[1];
-      precioKey = keys.length >= 3 ? keys[2] : null;
-    } else if (keys.length === 1) {
-      descKey = keys[0];
-    }
-  }
-
-  // If only codigo and desc found, look for numeric column as precio
-  if (codigoKey && descKey && !precioKey) {
-    for (const k of keys) {
-      if (k !== codigoKey && k !== descKey) {
-        const val = raw[k];
-        if (typeof val === "number" || (typeof val === "string" && /^\d/.test(val.replace(",", ".")))) {
-          precioKey = k;
-          break;
-        }
+      if (emptyKey) {
+        descKey = emptyKey;
+      } else {
+        descKey = keys[1];
       }
-    }
-  }
-
-  // If only desc found, look for numeric column as precio
-  if (!codigoKey && descKey && !precioKey) {
-    for (const k of keys) {
-      if (k !== descKey) {
-        const val = raw[k];
-        if (typeof val === "number" || (typeof val === "string" && /^\d/.test(val.replace(",", ".")))) {
-          if (!precioKey) {
-            precioKey = k;
-          } else if (!codigoKey) {
+    } else if (emptyKey) {
+      descKey = emptyKey;
+      // Find a numeric column as codigo
+      for (const k of keys) {
+        if (k !== emptyKey && typeof raw[k] === "number") {
+          if (!codigoKey) {
             codigoKey = k;
+          } else if (!precioKey) {
+            precioKey = k;
             break;
           }
         }
       }
+    }
+  }
+
+  // If we still don't have precio, look for any column with "$" or "unit" in the name
+  if (!precioKey) {
+    for (const [norm, original] of Object.entries(normalizedKeys)) {
+      if (norm.includes("$") || norm.includes("unit") || norm.includes("precio") || norm.includes("price")) {
+        precioKey = original;
+        break;
+      }
+    }
+  }
+
+  // If we have descKey but no precioKey, find a numeric column
+  if (!precioKey && descKey) {
+    for (const k of keys) {
+      if (k !== descKey && k !== codigoKey) {
+        const val = raw[k];
+        if (typeof val === "number" && val > 0) {
+          if (!precioKey) {
+            precioKey = k;
+          }
+        }
+      }
+    }
+  }
+
+  // If no codigoKey found but first column is numeric, use it
+  if (!codigoKey) {
+    const firstVal = raw[keys[0]];
+    if (typeof firstVal === "number") {
+      codigoKey = keys[0];
     }
   }
 
@@ -109,8 +130,13 @@ function mapProductData(raw: any): { codigo: string; descripcion: string; precio
     }
   }
 
-  // Skip empty rows
+  // Skip empty rows and header rows (rows where descripcion looks like a category)
   if (!descripcion && !codigo) return null;
+
+  // Skip category/section header rows (no numeric codigo and no precio)
+  const isCategoryRow = !codigo && precio === 0 && descripcion.includes(";");
+
+  if (isCategoryRow) return null;
 
   return { codigo, descripcion: descripcion || codigo, precio };
 }
