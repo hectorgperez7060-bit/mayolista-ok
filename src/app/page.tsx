@@ -33,6 +33,8 @@ import {
   ClipboardList,
   ChevronDown,
   Download,
+  Mic,
+  MicOff,
 } from "lucide-react";
 import { useMayolistaStore } from "@/lib/store";
 import { toast } from "sonner";
@@ -770,7 +772,9 @@ function BuscarView() {
   const [descuentoPct, setDescuentoPct] = useState(0);
   const [loading, setLoading] = useState(false);
   const [added, setAdded] = useState(false);
+  const [listening, setListening] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<any>(null);
 
   // Load products when mayorista changes
   useEffect(() => {
@@ -788,6 +792,46 @@ function BuscarView() {
     }
     load();
   }, [mayoristaActivo?.id, setProductos]);
+
+  // Voice search with Web Speech API
+  const toggleVoiceSearch = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      toast.error("Tu navegador no soporta búsqueda por voz");
+      return;
+    }
+
+    if (listening) {
+      recognitionRef.current?.stop();
+      setListening(false);
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = "es-AR";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+
+    recognition.onresult = (event: any) => {
+      let transcript = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript;
+      }
+      setQuery(transcript);
+    };
+
+    recognition.onend = () => {
+      setListening(false);
+    };
+
+    recognition.onerror = () => {
+      setListening(false);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    setListening(true);
+  };
 
   const handleSearch = async () => {
     if (!query.trim() || !mayoristaActivo?.id) return;
@@ -808,17 +852,20 @@ function BuscarView() {
     }
   };
 
-  // Fuzzy search on client side for better experience
+  // Fuzzy search on client side for better experience - more lenient threshold
   const fuse = new Fuse(productos, {
     keys: [
       { name: "codigo", weight: 0.3 },
       { name: "descripcion", weight: 0.7 },
     ],
-    threshold: 0.35,
+    threshold: 0.5,
     includeScore: true,
     minMatchCharLength: 2,
+    ignoreLocation: true,
+    findAllMatches: true,
   });
 
+  // Split query into words for better matching
   const fuzzyResults = query.trim().length >= 2 ? fuse.search(query) : [];
 
   const displayResults = fuzzyResults.length > 0
@@ -876,22 +923,35 @@ function BuscarView() {
         </p>
       </div>
 
-      {/* Search bar */}
+      {/* Search bar with microphone */}
       <div className="relative">
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
         <input
           ref={inputRef}
           type="text"
-          placeholder="Escribí código o descripción..."
+          placeholder="Escribí o hablá para buscar..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-          className="w-full pl-12 pr-4 py-3.5 rounded-xl border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all text-base"
+          className="w-full pl-12 pr-24 py-3.5 rounded-xl border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all text-base"
           autoFocus
         />
-        {loading && (
-          <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 animate-spin text-emerald-500" />
-        )}
+        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+          {loading && (
+            <Loader2 className="w-5 h-5 animate-spin text-emerald-500" />
+          )}
+          <button
+            onClick={toggleVoiceSearch}
+            className={`p-2 rounded-lg transition-all ${
+              listening
+                ? "bg-red-100 dark:bg-red-900/40 text-red-600 animate-pulse"
+                : "hover:bg-muted text-muted-foreground hover:text-foreground"
+            }`}
+            title={listening ? "Dejar de escuchar" : "Buscar por voz"}
+          >
+            {listening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+          </button>
+        </div>
       </div>
 
       {/* Results */}

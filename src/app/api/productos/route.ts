@@ -6,6 +6,115 @@ function getUserId(req: NextRequest): string | null {
   return req.headers.get("x-user-id");
 }
 
+// Smart column mapping - tries to find the right column regardless of naming
+function mapProductData(raw: any): { codigo: string; descripcion: string; precio: number } | null {
+  const keys = Object.keys(raw);
+  if (keys.length === 0) return null;
+
+  // Normalize all keys to lowercase for matching
+  const normalizedKeys: Record<string, string> = {};
+  for (const k of keys) {
+    normalizedKeys[k.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")] = k;
+  }
+
+  // Try to find codigo column
+  const codigoPatterns = ["codigo", "cod", "code", "codigo_barras", "cod_barras", "codigobarra", "cb", "sku", "id", "codigo_producto", "cod_producto"];
+  let codigoKey: string | null = null;
+  for (const pattern of codigoPatterns) {
+    for (const [norm, original] of Object.entries(normalizedKeys)) {
+      if (norm.includes(pattern)) {
+        codigoKey = original;
+        break;
+      }
+    }
+    if (codigoKey) break;
+  }
+
+  // Try to find descripcion column
+  const descPatterns = ["descripcion", "descrip", "desc", "descripcion_producto", "nombre", "producto", "detail", "detalle", "articulo", "denominacion", "nombre_producto", "productodesc"];
+  let descKey: string | null = null;
+  for (const pattern of descPatterns) {
+    for (const [norm, original] of Object.entries(normalizedKeys)) {
+      if (norm.includes(pattern)) {
+        descKey = original;
+        break;
+      }
+    }
+    if (descKey) break;
+  }
+
+  // Try to find precio column
+  const precioPatterns = ["precio", "price", "pr unit", "pr unitario", "precio_lista", "preciounitario", "punit", "precio_unitario", "valor", "costo", "importe", "pvp", "pr"];
+  let precioKey: string | null = null;
+  for (const pattern of precioPatterns) {
+    for (const [norm, original] of Object.entries(normalizedKeys)) {
+      if (norm.includes(pattern)) {
+        precioKey = original;
+        break;
+      }
+    }
+    if (precioKey) break;
+  }
+
+  // If no columns found, try positional (first = codigo, second = descripcion, third = precio)
+  if (!codigoKey && !descKey && !precioKey) {
+    if (keys.length >= 2) {
+      codigoKey = keys[0];
+      descKey = keys[1];
+      precioKey = keys.length >= 3 ? keys[2] : null;
+    } else if (keys.length === 1) {
+      descKey = keys[0];
+    }
+  }
+
+  // If only codigo and desc found, look for numeric column as precio
+  if (codigoKey && descKey && !precioKey) {
+    for (const k of keys) {
+      if (k !== codigoKey && k !== descKey) {
+        const val = raw[k];
+        if (typeof val === "number" || (typeof val === "string" && /^\d/.test(val.replace(",", ".")))) {
+          precioKey = k;
+          break;
+        }
+      }
+    }
+  }
+
+  // If only desc found, look for numeric column as precio
+  if (!codigoKey && descKey && !precioKey) {
+    for (const k of keys) {
+      if (k !== descKey) {
+        const val = raw[k];
+        if (typeof val === "number" || (typeof val === "string" && /^\d/.test(val.replace(",", ".")))) {
+          if (!precioKey) {
+            precioKey = k;
+          } else if (!codigoKey) {
+            codigoKey = k;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  const codigo = codigoKey ? String(raw[codigoKey] || "").trim() : "";
+  const descripcion = descKey ? String(raw[descKey] || "").trim() : "";
+  let precio = 0;
+  if (precioKey) {
+    const rawPrecio = raw[precioKey];
+    if (typeof rawPrecio === "number") {
+      precio = rawPrecio;
+    } else {
+      precio = parseFloat(String(rawPrecio).replace(/\s/g, "").replace(/\./g, "").replace(",", ".")) || 0;
+    }
+  }
+
+  // Skip empty rows
+  if (!descripcion && !codigo) return null;
+
+  return { codigo, descripcion: descripcion || codigo, precio };
+}
+
 // GET - Obtener productos del mayorista
 export async function GET(req: NextRequest) {
   try {
@@ -34,16 +143,24 @@ export async function GET(req: NextRequest) {
     const where: any = { mayoristaId };
 
     if (query) {
-      where.OR = [
-        { codigo: { contains: query, mode: "insensitive" } },
-        { descripcion: { contains: query, mode: "insensitive" } },
-      ];
+      // Split query into words and search for each
+      const words = query.toLowerCase().split(/\s+/).filter((w) => w.length > 1);
+
+      if (words.length > 0) {
+        where.OR = [];
+        for (const word of words) {
+          where.OR.push(
+            { codigo: { contains: word, mode: "insensitive" } },
+            { descripcion: { contains: word, mode: "insensitive" } }
+          );
+        }
+      }
     }
 
     const productos = await db.producto.findMany({
       where,
       orderBy: { descripcion: "asc" },
-      take: 50,
+      take: 100,
     });
 
     return NextResponse.json(productos);
@@ -82,13 +199,18 @@ export async function POST(req: NextRequest) {
       where: { mayoristaId },
     });
 
-    // Cargar nuevos productos
-    const productData = productos.map((p: any) => ({
-      codigo: String(p.codigo || ""),
-      descripcion: String(p.descripcion || p.descripción || ""),
-      precio: parseFloat(p.precio) || 0,
-      mayoristaId,
-    }));
+    // Mapear productos con detección inteligente de columnas
+    const productData: { codigo: string; descripcion: string; precio: number; mayoristaId: string }[] = [];
+    let skipped = 0;
+
+    for (const p of productos) {
+      const mapped = mapProductData(p);
+      if (mapped) {
+        productData.push({ ...mapped, mayoristaId });
+      } else {
+        skipped++;
+      }
+    }
 
     // Cargar en lotes de 100
     const BATCH_SIZE = 100;
@@ -100,6 +222,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       message: `Se cargaron ${productData.length} productos correctamente`,
       total: productData.length,
+      skipped,
     });
   } catch (error) {
     console.error("Error al cargar productos:", error);
