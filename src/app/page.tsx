@@ -833,17 +833,47 @@ function BuscarView() {
     setListening(true);
   };
 
+  const [aiSearching, setAiSearching] = useState(false);
+
   const handleSearch = async () => {
     if (!query.trim() || !mayoristaActivo?.id) return;
     setLoading(true);
     try {
+      // First try normal search
       const res = await fetch(
         `/api/productos?mayoristaId=${mayoristaActivo.id}&q=${encodeURIComponent(query)}`,
         { headers: authHeaders() }
       );
       if (res.ok) {
         const data = await res.json();
-        setResults(data);
+        if (data.length > 0) {
+          setResults(data);
+        } else {
+          // No results found - try AI search
+          setAiSearching(true);
+          try {
+            const aiRes = await fetch("/api/search-ai", {
+              method: "POST",
+              headers: authHeaders({ "Content-Type": "application/json" }),
+              body: JSON.stringify({ query: query.trim(), mayoristaId: mayoristaActivo.id }),
+            });
+            if (aiRes.ok) {
+              const aiData = await aiRes.json();
+              if (aiData.results && aiData.results.length > 0) {
+                setResults(aiData.results);
+                toast.success(`IA encontró ${aiData.results.length} productos`);
+              } else {
+                setResults([]);
+              }
+            } else {
+              setResults([]);
+            }
+          } catch {
+            setResults([]);
+          } finally {
+            setAiSearching(false);
+          }
+        }
       }
     } catch {
       /* ignore */
@@ -928,7 +958,7 @@ function BuscarView() {
         </p>
       </div>
 
-      {/* Search bar with microphone */}
+      {/* Search bar with microphone and AI */}
       <div className="relative">
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
         <input
@@ -942,8 +972,11 @@ function BuscarView() {
           autoFocus
         />
         <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-          {loading && (
-            <Loader2 className="w-5 h-5 animate-spin text-emerald-500" />
+          {(loading || aiSearching) && (
+            <div className="flex items-center gap-1 mr-1">
+              <Loader2 className="w-4 h-4 animate-spin text-emerald-500" />
+              {aiSearching && <span className="text-[10px] text-emerald-600 font-medium">IA</span>}
+            </div>
           )}
           <button
             onClick={toggleVoiceSearch}
