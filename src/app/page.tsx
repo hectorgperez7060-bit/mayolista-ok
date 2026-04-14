@@ -38,7 +38,6 @@ import {
 } from "lucide-react";
 import { useMayolistaStore } from "@/lib/store";
 import { toast } from "sonner";
-import Fuse from "fuse.js";
 
 // Helper to get auth headers for API calls
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
@@ -563,7 +562,8 @@ function MayoristaView() {
 
       if (res.ok) {
         const data = await res.json();
-        toast.success(`${data.total} productos cargados correctamente`);
+        toast.success(`✅ ${data.total} productos cargados. ${data.skipped ? `${data.skipped} filas sin datos.` : ""}`);
+        setUploadProgress(`¡${data.total} productos listos!`);
 
         // Set as active mayorista
         const mayoristaRes = await fetch("/api/mayoristas", { headers: authHeaders() });
@@ -576,7 +576,7 @@ function MayoristaView() {
           }
         }
       } else {
-        toast.error("Error al cargar productos");
+        toast.error("Error al cargar: " + (await res.text()));
       }
     } catch (error) {
       console.error(error);
@@ -793,6 +793,20 @@ function BuscarView() {
     load();
   }, [mayoristaActivo?.id, setProductos]);
 
+  // Also reload products after upload completes
+  const reloadProducts = async () => {
+    if (!mayoristaActivo?.id) return;
+    try {
+      const res = await fetch(`/api/productos?mayoristaId=${mayoristaActivo.id}`, { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setProductos(data);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
   // Voice search with Web Speech API
   const toggleVoiceSearch = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -839,73 +853,40 @@ function BuscarView() {
     if (!query.trim() || !mayoristaActivo?.id) return;
     setLoading(true);
     try {
-      // First try normal search
       const res = await fetch(
         `/api/productos?mayoristaId=${mayoristaActivo.id}&q=${encodeURIComponent(query)}`,
         { headers: authHeaders() }
       );
       if (res.ok) {
         const data = await res.json();
-        if (data.length > 0) {
-          setResults(data);
-        } else {
-          // No results found - try AI search
-          setAiSearching(true);
-          try {
-            const aiRes = await fetch("/api/search-ai", {
-              method: "POST",
-              headers: authHeaders({ "Content-Type": "application/json" }),
-              body: JSON.stringify({ query: query.trim(), mayoristaId: mayoristaActivo.id }),
-            });
-            if (aiRes.ok) {
-              const aiData = await aiRes.json();
-              if (aiData.results && aiData.results.length > 0) {
-                setResults(aiData.results);
-                toast.success(`IA encontró ${aiData.results.length} productos`);
-              } else {
-                setResults([]);
-              }
-            } else {
-              setResults([]);
-            }
-          } catch {
-            setResults([]);
-          } finally {
-            setAiSearching(false);
-          }
+        setResults(data);
+        if (data.length === 0) {
+          toast.info("No encontré nada. Probá con menos palabras.");
         }
       }
     } catch {
-      /* ignore */
+      toast.error("Error de conexión");
     } finally {
       setLoading(false);
     }
   };
 
-  // Fuzzy search on client side for better experience - more lenient threshold
-  const fuse = new Fuse(productos, {
-    keys: [
-      { name: "codigo", weight: 0.3 },
-      { name: "descripcion", weight: 0.7 },
-    ],
-    threshold: 0.4,
-    includeScore: true,
-    minMatchCharLength: 2,
-    ignoreLocation: true,
-    findAllMatches: true,
-  });
+  // Simple search: filter loaded products by text match (no fuzzy, no complex logic)
+  const normalizeText = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const normalizedQuery = normalizeText(query.trim());
+  const queryWords = normalizedQuery.split(/\s+/).filter(w => w.length >= 2);
+  const meaningfulWords = queryWords.length > 1 ? queryWords.filter(w => w.length >= 3) : queryWords;
 
-  // Split query into words for better matching
-  const fuzzyResults = query.trim().length >= 2 ? fuse.search(query) : [];
+  const localResults = meaningfulWords.length > 0 && productos.length > 0
+    ? productos.filter(p => {
+        const desc = normalizeText(p.descripcion || "");
+        const cod = normalizeText(p.codigo || "");
+        return meaningfulWords.some(w => desc.includes(w) || cod.includes(w));
+      }).slice(0, 50)
+    : [];
 
-  // Filter out bad matches and limit results
-  const goodFuzzyResults = fuzzyResults
-    .filter((r) => (r.score || 0) < 0.6)
-    .slice(0, 20);
-
-  const displayResults = goodFuzzyResults.length > 0
-    ? goodFuzzyResults.map((r) => ({ ...r.item, score: r.score }))
-    : results;
+  // Display: if we have local results show them, otherwise show API results
+  const displayResults = localResults.length > 0 ? localResults : results;
 
   const handleAddToPedido = () => {
     if (!selectedProduct || cantidad < 1) return;
