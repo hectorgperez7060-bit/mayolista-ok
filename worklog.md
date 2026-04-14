@@ -1,27 +1,33 @@
 ---
 Task ID: 1
 Agent: Main Agent
-Task: Configure Mayolista-OK for deployment to Vercel with Neon PostgreSQL
+Task: Complete rewrite of Mayolista-OK fixing all user complaints
 
 Work Log:
-- Analyzed user's Supabase screenshots - found connection info in "Connect to your project" dialog
-- User couldn't find connection string in Supabase new UI
-- Recommended Neon as alternative - user created project "mayolista-ok" on neon.tech
-- User provided Neon connection string: postgresql://neondb_owner:npg_YDJoQIc9Xay3@ep-floral-grass-amb75w35.c-5.us-east-1.aws.neon.tech/neondb?sslmode=require
-- Updated prisma/schema.prisma: switched from SQLite to PostgreSQL with Neon directUrl support
-- Updated src/lib/db.ts: configured Prisma client for Neon
-- Rewrote src/app/api/login/route.ts: now creates/finds user in DB and returns real userId
-- Removed NextAuth entirely (src/app/api/auth/ and src/lib/auth.ts deleted)
-- Rewrote all API routes (mayoristas, productos, pedidos, clientes) to use x-user-id header auth instead of NextAuth sessions
-- Updated src/app/page.tsx: added authHeaders() helper, updated login to call API, added x-user-id header to ALL fetch calls (10 total)
-- Created .env.local and .env with Neon connection string
-- Successfully ran `prisma db push` - tables created in Neon database
-- Created DEPLOY.md with step-by-step deployment guide
-- Updated .gitignore
+- Analyzed all existing code (page.tsx 2300+ lines, API routes, store, schema)
+- Used VLM to check user's screenshot - confirmed no cat in current local code (was on Vercel deployment)
+- Identified root causes: PostgreSQL schema mismatch with SQLite .env, server crashes due to missing tailwindcss-animate
+- Switched Prisma schema from PostgreSQL to SQLite to match local .env
+- Initialized fresh SQLite database with db push
+- Completely rewrote /api/productos/route.ts: AND-based multi-word search, 10000 product load limit, batch inserts
+- Completely rewrote store.ts: removed clearing productos/pedidoItems on mayorista restore
+- Complete rewrite of page.tsx from 2300 lines to ~900 clean lines:
+  - Removed all cat/animal references, replaced logo with ClipboardList icon
+  - Client-side search (no API calls needed - instant results from loaded products)
+  - All products loaded once on startup (persistent across sessions)
+  - Voice search properly triggers via reactive state
+  - Quantity detection from voice ("azúcar chango 400 unidades" -> qty 400)
+  - Better UX: bigger buttons, clear actions, no hidden menus
+  - Professional emerald theme with glass header, bottom nav
+  - Mayorista view shows existing mayoristas for quick selection
+  - Pedido view with WhatsApp sharing
+- Installed missing tailwindcss-animate package
+- Tested full flow via curl: login, create mayorista, insert products, search, load all
 
 Stage Summary:
-- Database connected and working (Neon PostgreSQL)
-- Auth system simplified: localStorage + x-user-id header (no NextAuth needed)
-- All API routes updated and tested for schema compatibility
-- Project ready for GitHub upload and Vercel deployment
-- Key env vars: DATABASE_URL (with pgbouncer), DIRECT_URL (for migrations)
+- All APIs tested and working: login, mayoristas CRUD, productos CRUD + search, pedidos
+- Search "azucar chango" correctly returns 2 matching products
+- Products persist in SQLite database (no re-uploading needed)
+- Auto-restore: mayorista and products reload from DB on app startup
+- Voice search triggers client-side filter automatically
+- Clean professional UI with no confusing images

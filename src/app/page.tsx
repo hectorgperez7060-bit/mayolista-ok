@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   Loader2,
   LogIn,
@@ -10,36 +10,30 @@ import {
   Plus,
   Users,
   History,
-  Share2,
   LogOut,
   Upload,
   Trash2,
-  ChevronLeft,
   Check,
   AlertCircle,
   Package,
   Truck,
   FileSpreadsheet,
-  Eye,
   Send,
   Phone,
   MapPin,
-  Tag,
-  Gift,
-  Percent,
   X,
   Menu,
   Store,
   ClipboardList,
-  ChevronDown,
-  Download,
   Mic,
   MicOff,
+  ChevronRight,
+  Sparkles,
 } from "lucide-react";
 import { useMayolistaStore } from "@/lib/store";
 import { toast } from "sonner";
 
-// Helper to get auth headers for API calls
+// ==================== HELPERS ====================
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
   if (typeof window === "undefined") return { ...extra };
   const stored = localStorage.getItem("mayolista_user");
@@ -53,13 +47,33 @@ function authHeaders(extra: Record<string, string> = {}): Record<string, string>
   return headers;
 }
 
-function getUserId(): string | null {
-  if (typeof window === "undefined") return null;
-  const stored = localStorage.getItem("mayolista_user");
-  if (stored) {
-    try { return JSON.parse(stored)?.id || null; } catch { return null; }
+function normalizeText(t: string): string {
+  return t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+function formatPrice(p: number): string {
+  return p.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Parse quantity from query: "azúcar chango 400 unidades" -> { query: "azúcar chango", cantidad: 400 }
+function parseQuantity(q: string): { cleanQuery: string; cantidad: number } {
+  const qtyPattern = /\b(\d+)\s*(?:unidades?|unit|cajas?|bolsas?|packs?|kilos?|kgs?|kg|botellas?|latas?|docenas?)\b/i;
+  const match = q.match(qtyPattern);
+  if (match) {
+    const cantidad = parseInt(match[1], 10);
+    const cleanQuery = q.replace(qtyPattern, "").trim();
+    return { cleanQuery, cantidad: cantidad > 0 ? cantidad : 1 };
   }
-  return null;
+  const qtyPattern2 = /\b(\d+)\s*\w*$/;
+  const match2 = q.match(qtyPattern2);
+  if (match2 && parseInt(match2[1], 10) > 1) {
+    const num = parseInt(match2[1], 10);
+    if (num >= 2 && num <= 9999) {
+      const cleanQuery = q.replace(qtyPattern2, "").trim();
+      return { cleanQuery, cantidad: num };
+    }
+  }
+  return { cleanQuery: q, cantidad: 1 };
 }
 
 // ==================== LOGIN VIEW ====================
@@ -103,7 +117,6 @@ function LoginView() {
         transition={{ duration: 0.6 }}
         className="w-full max-w-md"
       >
-        {/* Logo */}
         <div className="text-center mb-8">
           <motion.div
             initial={{ scale: 0.5, opacity: 0 }}
@@ -111,11 +124,7 @@ function LoginView() {
             transition={{ duration: 0.5, delay: 0.2 }}
             className="inline-flex items-center justify-center w-24 h-24 rounded-3xl bg-gradient-to-br from-emerald-400 to-emerald-600 shadow-xl shadow-emerald-200 dark:shadow-emerald-900/30 mb-4"
           >
-            <img
-              src="/logo-mayolista.png"
-              alt="Mayolista-OK"
-              className="w-16 h-16 rounded-2xl"
-            />
+            <ClipboardList className="w-12 h-12 text-white" />
           </motion.div>
           <h1 className="text-4xl font-bold text-gradient">Mayolista-OK</h1>
           <p className="text-muted-foreground mt-2 text-lg">
@@ -123,7 +132,6 @@ function LoginView() {
           </p>
         </div>
 
-        {/* Login Card */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -166,7 +174,7 @@ function LoginView() {
           <button
             onClick={handleLogin}
             disabled={loading || !nombre.trim() || !email.trim()}
-            className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold shadow-lg shadow-emerald-200 dark:shadow-emerald-900/30 hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold text-base shadow-lg shadow-emerald-200 dark:shadow-emerald-900/30 hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {loading ? (
               <Loader2 className="w-5 h-5 animate-spin" />
@@ -190,64 +198,64 @@ function LoginView() {
 // ==================== HEADER ====================
 function AppHeader() {
   const { user, currentView, setCurrentView, mayoristaActivo } = useMayolistaStore();
-
   const [menuOpen, setMenuOpen] = useState(false);
 
   const handleLogout = () => {
     localStorage.removeItem("mayolista_user");
+    localStorage.removeItem("mayolista_mayorista_id");
     useMayolistaStore.getState().setUser(null);
   };
 
   const navItems = [
     { id: "dashboard", label: "Inicio", icon: Store },
-    { id: "mayorista", label: "Mayorista", icon: Truck },
     { id: "buscar", label: "Buscar", icon: Search },
     { id: "pedido", label: "Pedido", icon: ShoppingCart },
+    { id: "mayorista", label: "Mayorista", icon: Truck },
     { id: "clientes", label: "Clientes", icon: Users },
     { id: "historial", label: "Historial", icon: History },
   ];
 
   return (
     <header className="sticky top-0 z-50 glass border-b">
-      <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
-        {/* Logo + Nombre */}
+      <div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
         <button
           onClick={() => setCurrentView("dashboard")}
           className="flex items-center gap-2.5"
         >
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-md">
-            <img src="/logo-mayolista.png" alt="" className="w-6 h-6 rounded-lg" />
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-md">
+            <ClipboardList className="w-4 h-4 text-white" />
           </div>
           <div className="text-left">
-            <h1 className="text-base font-bold leading-tight text-gradient">Mayolista-OK</h1>
+            <h1 className="text-sm font-bold leading-tight text-gradient">Mayolista-OK</h1>
             {mayoristaActivo && (
-              <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium leading-tight truncate max-w-[180px]">
+              <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium leading-tight truncate max-w-[160px]">
                 {mayoristaActivo.nombre}
               </p>
             )}
           </div>
         </button>
 
-        {/* Desktop Nav */}
-        <nav className="hidden md:flex items-center gap-1">
+        <nav className="hidden md:flex items-center gap-0.5">
           {navItems.map((item) => (
             <button
               key={item.id}
               onClick={() => setCurrentView(item.id)}
-              className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+              className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
                 currentView === item.id
                   ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
                   : "text-muted-foreground hover:text-foreground hover:bg-muted"
               }`}
             >
-              <item.icon className="w-4 h-4" />
+              <span className="flex items-center gap-1.5">
+                <item.icon className="w-3.5 h-3.5" />
+                {item.label}
+              </span>
             </button>
           ))}
         </nav>
 
-        {/* User menu */}
-        <div className="flex items-center gap-2">
-          <span className="hidden sm:block text-sm font-medium text-muted-foreground">
+        <div className="flex items-center gap-1.5">
+          <span className="hidden sm:block text-xs font-medium text-muted-foreground mr-1">
             {user?.name}
           </span>
           <button
@@ -266,7 +274,6 @@ function AppHeader() {
         </div>
       </div>
 
-      {/* Mobile Nav */}
       <AnimatePresence>
         {menuOpen && (
           <motion.div
@@ -301,7 +308,7 @@ function AppHeader() {
   );
 }
 
-// ==================== MOBILE BOTTOM NAV ====================
+// ==================== BOTTOM NAV ====================
 function BottomNav() {
   const { currentView, setCurrentView } = useMayolistaStore();
 
@@ -336,151 +343,152 @@ function BottomNav() {
 
 // ==================== DASHBOARD VIEW ====================
 function DashboardView() {
-  const {
-    mayoristaActivo,
-    setCurrentView,
-    pedidoItems,
-    productos,
-  } = useMayolistaStore();
+  const { mayoristaActivo, setCurrentView, pedidoItems, productos } = useMayolistaStore();
   const pedidoCount = pedidoItems.length;
   const totalItems = productos.length;
 
   return (
     <div className="animate-fade-in-up space-y-6">
-      {/* Hero */}
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-700 p-6 text-white">
         <div className="absolute top-0 right-0 w-40 h-40 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2" />
         <div className="absolute bottom-0 left-0 w-32 h-32 bg-white/5 rounded-full translate-y-1/2 -translate-x-1/2" />
         <div className="relative">
           <h2 className="text-2xl font-bold">
-            {mayoristaActivo ? ` ${mayoristaActivo.nombre}` : "¡Bienvenido!"}
+            {mayoristaActivo ? mayoristaActivo.nombre : "¡Bienvenido!"}
           </h2>
           <p className="text-emerald-100 mt-1">
             {mayoristaActivo
-              ? `${mayoristaActivo.rubro} · ${mayoristaActivo._count?.productos || 0} productos`
+              ? `${mayoristaActivo.rubro} · ${totalItems || mayoristaActivo._count?.productos || 0} productos cargados`
               : "Configurá tu mayorista para empezar"}
           </p>
           {!mayoristaActivo && (
             <button
               onClick={() => setCurrentView("mayorista")}
-              className="mt-4 px-5 py-2.5 bg-white text-emerald-700 font-semibold rounded-xl hover:bg-emerald-50 transition-colors flex items-center gap-2 shadow-lg"
+              className="mt-4 px-6 py-3 bg-white text-emerald-700 font-semibold rounded-xl hover:bg-emerald-50 transition-colors flex items-center gap-2 shadow-lg text-base"
             >
-              <Store className="w-4 h-4" />
+              <Store className="w-5 h-5" />
               Configurar mayorista
             </button>
           )}
         </div>
       </div>
 
-      {/* BIG onboarding card when no mayorista */}
       {!mayoristaActivo && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="relative overflow-hidden rounded-2xl border-2 border-dashed border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20 p-8 text-center"
+          className="rounded-2xl border-2 border-dashed border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20 p-8 text-center"
         >
-          <div className="w-20 h-20 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center mx-auto mb-4">
-            <Truck className="w-10 h-10 text-emerald-600 dark:text-emerald-400" />
+          <div className="w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center mx-auto mb-4">
+            <Truck className="w-8 h-8 text-emerald-600 dark:text-emerald-400" />
           </div>
-          <h3 className="text-2xl font-bold mb-2">¿Primera vez acá?</h3>
-          <p className="text-muted-foreground text-base max-w-md mx-auto mb-6">
-            Para empezar a armar pedidos, necesitás configurar tu primer mayorista. 
+          <h3 className="text-xl font-bold mb-2">¿Primera vez acá?</h3>
+          <p className="text-muted-foreground mb-6">
+            Para empezar a armar pedidos, necesitás configurar tu primer mayorista.
             Elegí un nombre, el rubro, y subí tu lista de precios.
           </p>
           <button
             onClick={() => setCurrentView("mayorista")}
-            className="inline-flex items-center gap-3 px-8 py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold text-lg shadow-xl shadow-emerald-200 dark:shadow-emerald-900/40 hover:from-emerald-600 hover:to-emerald-700 hover:scale-[1.02] active:scale-[0.98] transition-all"
+            className="inline-flex items-center gap-3 px-8 py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold text-lg shadow-xl hover:from-emerald-600 hover:to-emerald-700 hover:scale-[1.02] active:scale-[0.98] transition-all"
           >
             <Store className="w-6 h-6" />
             Configurar mi primer mayorista
           </button>
           <p className="text-xs text-muted-foreground mt-4">
-            Takes less than 2 minutes · Subí tu lista de precios en Excel o CSV
+            Subí tu lista de precios en Excel o CSV · Takes less than 2 minutes
           </p>
         </motion.div>
       )}
 
-      {/* Quick Stats - only show when mayorista is active */}
       {mayoristaActivo && (
-      <div className="grid grid-cols-2 gap-4">
-        <button
-          onClick={() => setCurrentView("buscar")}
-          className="p-4 rounded-xl border bg-card hover:border-emerald-300 dark:hover:border-emerald-700 transition-all group"
-        >
-          <Package className="w-8 h-8 text-emerald-500 mb-2 group-hover:scale-110 transition-transform" />
-          <p className="text-2xl font-bold">{totalItems || mayoristaActivo?._count?.productos || 0}</p>
-          <p className="text-sm text-muted-foreground">Productos disponibles</p>
-        </button>
-        <button
-          onClick={() => setCurrentView("pedido")}
-          className="p-4 rounded-xl border bg-card hover:border-emerald-300 dark:hover:border-emerald-700 transition-all group"
-        >
-          <ShoppingCart className="w-8 h-8 text-emerald-500 mb-2 group-hover:scale-110 transition-transform" />
-          <p className="text-2xl font-bold">{pedidoCount}</p>
-          <p className="text-sm text-muted-foreground">En tu pedido</p>
-        </button>
-      </div>
-      )}
+        <>
+          <div className="grid grid-cols-2 gap-4">
+            <button
+              onClick={() => setCurrentView("buscar")}
+              className="p-5 rounded-xl border bg-card hover:border-emerald-300 dark:hover:border-emerald-700 transition-all group"
+            >
+              <Package className="w-8 h-8 text-emerald-500 mb-2 group-hover:scale-110 transition-transform" />
+              <p className="text-2xl font-bold">{totalItems || mayoristaActivo._count?.productos || 0}</p>
+              <p className="text-sm text-muted-foreground">Productos</p>
+            </button>
+            <button
+              onClick={() => setCurrentView("pedido")}
+              className="p-5 rounded-xl border bg-card hover:border-emerald-300 dark:hover:border-emerald-700 transition-all group"
+            >
+              <ShoppingCart className="w-8 h-8 text-emerald-500 mb-2 group-hover:scale-110 transition-transform" />
+              <p className="text-2xl font-bold">{pedidoCount}</p>
+              <p className="text-sm text-muted-foreground">En tu pedido</p>
+            </button>
+          </div>
 
-      {/* Quick Actions */}
-      <div className="space-y-3">
-        <h3 className="font-semibold text-lg">Acciones rápidas</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {mayoristaActivo && (
-            <>
+          <div className="space-y-3">
+            <h3 className="font-semibold text-lg">Acciones rápidas</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
                 onClick={() => setCurrentView("buscar")}
                 className="flex items-center gap-3 p-4 rounded-xl border bg-card hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-all text-left"
               >
-                <div className="w-10 h-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center shrink-0">
                   <Search className="w-5 h-5 text-emerald-600" />
                 </div>
-                <div>
-                  <p className="font-medium text-sm">Buscar productos</p>
-                  <p className="text-xs text-muted-foreground">Encontrá rápido lo que necesitás</p>
+                <div className="flex items-center justify-between flex-1">
+                  <div>
+                    <p className="font-medium text-sm">Buscar productos</p>
+                    <p className="text-xs text-muted-foreground">Encontrá rápido lo que necesitás</p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground" />
                 </div>
               </button>
               <button
                 onClick={() => setCurrentView("pedido")}
                 className="flex items-center gap-3 p-4 rounded-xl border bg-card hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-all text-left"
               >
-                <div className="w-10 h-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center shrink-0">
                   <ClipboardList className="w-5 h-5 text-emerald-600" />
                 </div>
-                <div>
-                  <p className="font-medium text-sm">Ver pedido</p>
-                  <p className="text-xs text-muted-foreground">Revisá y enviá tu lista</p>
+                <div className="flex items-center justify-between flex-1">
+                  <div>
+                    <p className="font-medium text-sm">Ver pedido</p>
+                    <p className="text-xs text-muted-foreground">Revisá y enviá tu lista</p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground" />
                 </div>
               </button>
-            </>
-          )}
-          <button
-            onClick={() => setCurrentView("mayorista")}
-            className="flex items-center gap-3 p-4 rounded-xl border bg-card hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-all text-left"
-          >
-            <div className="w-10 h-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
-              <Truck className="w-5 h-5 text-emerald-600" />
+              <button
+                onClick={() => setCurrentView("mayorista")}
+                className="flex items-center gap-3 p-4 rounded-xl border bg-card hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-all text-left"
+              >
+                <div className="w-10 h-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center shrink-0">
+                  <Truck className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div className="flex items-center justify-between flex-1">
+                  <div>
+                    <p className="font-medium text-sm">Cambiar mayorista</p>
+                    <p className="text-xs text-muted-foreground">Cargá otra lista</p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                </div>
+              </button>
+              <button
+                onClick={() => setCurrentView("clientes")}
+                className="flex items-center gap-3 p-4 rounded-xl border bg-card hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-all text-left"
+              >
+                <div className="w-10 h-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center shrink-0">
+                  <Users className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div className="flex items-center justify-between flex-1">
+                  <div>
+                    <p className="font-medium text-sm">Mis clientes</p>
+                    <p className="text-xs text-muted-foreground">Gestioná tu cartera</p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                </div>
+              </button>
             </div>
-            <div>
-              <p className="font-medium text-sm">Cambiar mayorista</p>
-              <p className="text-xs text-muted-foreground">Cargá otra lista de precios</p>
-            </div>
-          </button>
-          <button
-            onClick={() => setCurrentView("clientes")}
-            className="flex items-center gap-3 p-4 rounded-xl border bg-card hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-all text-left"
-          >
-            <div className="w-10 h-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
-              <Users className="w-5 h-5 text-emerald-600" />
-            </div>
-            <div>
-              <p className="font-medium text-sm">Mis clientes</p>
-              <p className="text-xs text-muted-foreground">Gestioná tu cartera</p>
-            </div>
-          </button>
-        </div>
-      </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -495,23 +503,33 @@ function MayoristaView() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
   const [currentMayoristaId, setCurrentMayoristaId] = useState("");
+  const [existingMayoristas, setExistingMayoristas] = useState<any[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const rubros = [
-    "Ferretería",
-    "Limpieza",
-    "Alimentos",
-    "Bebidas",
-    "Tabacos",
-    "Kiosco",
-    "Indumentaria",
-    "Calzado",
-    "Electrónica",
-    "Pinturería",
-    "Plomería",
-    "Electricidad",
-    "Otros",
+    "Alimentos", "Bebidas", "Kiosco", "Limpieza", "Ferretería",
+    "Tabacos", "Indumentaria", "Calzado", "Electrónica",
+    "Pinturería", "Plomería", "Electricidad", "Otros",
   ];
+
+  // Load existing mayoristas on mount
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await fetch("/api/mayoristas", { headers: authHeaders() });
+        if (res.ok) {
+          const data = await res.json();
+          setExistingMayoristas(data);
+        }
+      } catch { /* ignore */ }
+    }
+    load();
+  }, []);
+
+  const handleSelectExisting = async (m: any) => {
+    setMayoristaActivo(m);
+    setCurrentView("buscar");
+  };
 
   const handleCreateMayorista = async () => {
     if (!nombre.trim() || !rubro) {
@@ -549,7 +567,6 @@ function MayoristaView() {
     setUploadProgress("Leyendo archivo...");
 
     try {
-      // Step 1: Read Excel in the browser
       const XLSX = await import("xlsx");
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
@@ -562,7 +579,6 @@ function MayoristaView() {
         return;
       }
 
-      // Step 2: Process in the browser - map columns
       setUploadProgress(`Procesando ${rows.length} filas...`);
 
       const keys = Object.keys(rows[0]);
@@ -622,23 +638,18 @@ function MayoristaView() {
         return;
       }
 
-      // Step 3: Send in chunks of 300 (each chunk takes ~2-3 seconds)
+      // Send in chunks
       const CHUNK_SIZE = 300;
       const totalChunks = Math.ceil(products.length / CHUNK_SIZE);
       let totalLoaded = 0;
 
-      // First chunk: delete old + insert first batch
       setUploadProgress(`Enviando lote 1 de ${totalChunks}...`);
 
       const firstChunk = products.slice(0, CHUNK_SIZE);
       const firstRes = await fetch("/api/productos", {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({
-          mayoristaId: currentMayoristaId,
-          productos: firstChunk,
-          replace: true, // delete old products
-        }),
+        body: JSON.stringify({ mayoristaId: currentMayoristaId, productos: firstChunk, replace: true }),
       });
 
       if (!firstRes.ok) {
@@ -652,40 +663,40 @@ function MayoristaView() {
       totalLoaded += firstChunk.length;
       setUploadProgress(`${totalLoaded} de ${products.length} productos...`);
 
-      // Remaining chunks
       for (let i = 1; i < totalChunks; i++) {
         const chunk = products.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-        setUploadProgress(`Enviando lote ${i + 1} de ${totalChunks} (${totalLoaded} cargados)...`);
+        setUploadProgress(`Enviando lote ${i + 1} de ${totalChunks}...`);
 
         const chunkRes = await fetch("/api/productos", {
           method: "POST",
           headers: authHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify({
-            mayoristaId: currentMayoristaId,
-            productos: chunk,
-            replace: false, // don't delete, just add
-          }),
+          body: JSON.stringify({ mayoristaId: currentMayoristaId, productos: chunk, replace: false }),
         });
 
         if (!chunkRes.ok) {
-          toast.error(`Error en lote ${i + 1}, se cargaron ${totalLoaded} productos`);
+          toast.error(`Error en lote ${i + 1}`);
           break;
         }
-
         totalLoaded += chunk.length;
         setUploadProgress(`${totalLoaded} de ${products.length} productos...`);
       }
 
-      toast.success(`✅ ${totalLoaded} productos cargados OK`);
+      toast.success(`${totalLoaded} productos cargados OK`);
       setUploadProgress(`¡${totalLoaded} productos listos!`);
 
-      // Set as active mayorista
+      // Set as active mayorista and load products
       const mayoristaRes = await fetch("/api/mayoristas", { headers: authHeaders() });
       if (mayoristaRes.ok) {
         const mayoristas = await mayoristaRes.json();
         const active = mayoristas.find((m: any) => m.id === currentMayoristaId);
         if (active) {
           setMayoristaActivo(active);
+          // Load products into store
+          const prodRes = await fetch(`/api/productos?mayoristaId=${currentMayoristaId}`, { headers: authHeaders() });
+          if (prodRes.ok) {
+            const prods = await prodRes.json();
+            setProductos(prods);
+          }
           setCurrentView("buscar");
         }
       }
@@ -703,20 +714,43 @@ function MayoristaView() {
       <div>
         <h2 className="text-2xl font-bold">Configurar Mayorista</h2>
         <p className="text-muted-foreground mt-1">
-          Cargá los datos del mayorista y subí tu lista de precios
+          Elegí un mayorista existente o creá uno nuevo
         </p>
       </div>
 
-      {!currentMayoristaId ? (
-        /* Step 1: Create mayorista */
-        <div className="space-y-4 p-6 rounded-2xl border bg-card">
-          <div className="flex items-center gap-2 mb-4">
-            <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center text-emerald-700 dark:text-emerald-300 font-bold text-sm">
-              1
-            </div>
-            <h3 className="font-semibold">Datos del mayorista</h3>
-          </div>
+      {/* Existing mayoristas */}
+      {existingMayoristas.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Mayoristas existentes</h3>
+          {existingMayoristas.map((m: any) => (
+            <button
+              key={m.id}
+              onClick={() => handleSelectExisting(m)}
+              className={`w-full flex items-center justify-between p-4 rounded-xl border bg-card hover:border-emerald-300 dark:hover:border-emerald-700 transition-all ${
+                m.id === (mayoristaActivo?.id) ? "border-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20" : ""
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
+                  <Truck className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div className="text-left">
+                  <p className="font-medium text-sm">{m.nombre}</p>
+                  <p className="text-xs text-muted-foreground">{m.rubro} · {m._count?.productos || 0} productos</p>
+                </div>
+              </div>
+              {m.id === mayoristaActivo?.id && (
+                <Check className="w-5 h-5 text-emerald-600" />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
 
+      {/* Create new */}
+      {!currentMayoristaId ? (
+        <div className="space-y-4 p-6 rounded-2xl border bg-card">
+          <h3 className="font-semibold">Crear nuevo mayorista</h3>
           <div className="space-y-4">
             <div>
               <label className="text-sm font-medium mb-1 block">Nombre del mayorista</label>
@@ -728,7 +762,6 @@ function MayoristaView() {
                 className="w-full px-4 py-3 rounded-xl border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
               />
             </div>
-
             <div>
               <label className="text-sm font-medium mb-2 block">Rubro</label>
               <div className="flex flex-wrap gap-2">
@@ -736,7 +769,7 @@ function MayoristaView() {
                   <button
                     key={r}
                     onClick={() => setRubro(r)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
                       rubro === r
                         ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700"
                         : "bg-muted text-muted-foreground hover:bg-muted/80"
@@ -747,52 +780,22 @@ function MayoristaView() {
                 ))}
               </div>
             </div>
-
             <button
               onClick={handleCreateMayorista}
               disabled={loading || !nombre.trim() || !rubro}
-              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold shadow-lg shadow-emerald-200 dark:shadow-emerald-900/30 hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold shadow-lg hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-base"
             >
-              {loading ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <>
-                  <Plus className="w-5 h-5" />
-                  Crear mayorista
-                </>
-              )}
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Plus className="w-5 h-5" /> Crear mayorista</>}
             </button>
           </div>
         </div>
       ) : (
-        /* Step 2: Upload list */
         <div className="space-y-4 p-6 rounded-2xl border bg-card">
-          <div className="flex items-center gap-2 mb-4">
-            <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center text-emerald-700 dark:text-emerald-300 font-bold text-sm">
-              2
-            </div>
-            <h3 className="font-semibold">Subir lista de precios</h3>
+          <h3 className="font-semibold">Subir lista de precios</h3>
+          <div className="text-sm text-muted-foreground mb-4">
+            Subí tu archivo Excel o CSV. El sistema detecta automáticamente las columnas de código, descripción y precio.
           </div>
 
-          <div className="text-sm text-muted-foreground space-y-2 mb-4">
-            <p>Subí tu archivo Excel o CSV con las siguientes columnas:</p>
-            <div className="flex flex-wrap gap-2">
-              <span className="px-2 py-1 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 text-xs font-mono">
-                código
-              </span>
-              <span className="px-2 py-1 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 text-xs font-mono">
-                descripción
-              </span>
-              <span className="px-2 py-1 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 text-xs font-mono">
-                precio
-              </span>
-            </div>
-            <p className="text-xs">
-              Si tu archivo tiene otros nombres de columnas, los vamos a intentar reconocer automáticamente.
-            </p>
-          </div>
-
-          {/* Drop zone */}
           <div
             onClick={() => fileInputRef.current?.click()}
             className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all hover:border-emerald-400 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20 ${
@@ -813,16 +816,8 @@ function MayoristaView() {
               <div className="space-y-2">
                 <FileSpreadsheet className="w-10 h-10 text-emerald-500 mx-auto" />
                 <p className="font-medium text-sm">{file.name}</p>
-                <p className="text-xs text-muted-foreground">
-                  {(file.size / 1024).toFixed(1)} KB
-                </p>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setFile(null);
-                  }}
-                  className="text-xs text-destructive hover:underline"
-                >
+                <p className="text-xs text-muted-foreground">{(file.size / 1024).toFixed(1)} KB</p>
+                <button onClick={(e) => { e.stopPropagation(); setFile(null); }} className="text-xs text-destructive hover:underline">
                   Quitar archivo
                 </button>
               </div>
@@ -845,66 +840,37 @@ function MayoristaView() {
           <button
             onClick={handleFileUpload}
             disabled={uploading || !file}
-            className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold shadow-lg shadow-emerald-200 dark:shadow-emerald-900/30 hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold shadow-lg hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-base"
           >
-            {uploading ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
-            ) : (
-              <>
-                <Upload className="w-5 h-5" />
-                Cargar lista
-              </>
-            )}
+            {uploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Upload className="w-5 h-5" /> Cargar lista</>}
           </button>
 
-          <button
-            onClick={() => {
-              setCurrentMayoristaId("");
-              setFile(null);
-            }}
-            className="w-full py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Volver al paso anterior
+          <button onClick={() => { setCurrentMayoristaId(""); setFile(null); }} className="w-full py-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+            Volver
           </button>
         </div>
       )}
 
-      {/* Borrar todos los productos */}
+      {/* Delete products */}
       {mayoristaActivo && (
         <div className="p-4 rounded-2xl border border-destructive/30 bg-destructive/5">
           <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0">
-              <Trash2 className="w-5 h-5 text-destructive" />
-            </div>
+            <Trash2 className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
             <div className="flex-1">
               <h3 className="font-semibold text-sm">Borrar todos los productos</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Eliminá todos los productos de <strong>{mayoristaActivo.nombre}</strong>. Esta acción no se puede deshacer.
-              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">Eliminá todos los productos de {mayoristaActivo.nombre}</p>
               <button
                 onClick={async () => {
-                  if (!mayoristaActivo?.id) return;
-                  if (!confirm(`¿Estás seguro de borrar todos los productos de ${mayoristaActivo.nombre}?`)) return;
+                  if (!confirm(`¿Borrar todos los productos de ${mayoristaActivo.nombre}?`)) return;
                   try {
-                    const res = await fetch(`/api/productos?mayoristaId=${mayoristaActivo.id}`, {
-                      method: "DELETE",
-                      headers: authHeaders(),
-                    });
-                    if (res.ok) {
-                      const data = await res.json();
-                      setProductos([]);
-                      toast.success(`${data.deleted} productos eliminados`);
-                    } else {
-                      toast.error("Error al borrar productos");
-                    }
-                  } catch {
-                    toast.error("Error de conexión");
-                  }
+                    const res = await fetch(`/api/productos?mayoristaId=${mayoristaActivo.id}`, { method: "DELETE", headers: authHeaders() });
+                    if (res.ok) { const data = await res.json(); setProductos([]); toast.success(`${data.deleted} productos eliminados`); }
+                    else toast.error("Error al borrar");
+                  } catch { toast.error("Error de conexión"); }
                 }}
-                className="mt-3 px-4 py-2 rounded-lg bg-destructive text-destructive-foreground text-sm font-medium hover:bg-destructive/90 transition-colors flex items-center gap-2"
+                className="mt-3 px-4 py-2 rounded-lg bg-destructive text-destructive-foreground text-sm font-medium hover:bg-destructive/90 transition-colors"
               >
-                <Trash2 className="w-4 h-4" />
-                Borrar todos los productos
+                Borrar todo
               </button>
             </div>
           </div>
@@ -918,7 +884,6 @@ function MayoristaView() {
 function BuscarView() {
   const { mayoristaActivo, productos, setProductos, addItem, setCurrentView } = useMayolistaStore();
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<any[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<any>(null);
   const [cantidad, setCantidad] = useState(1);
   const [cantidadRegalo, setCantidadRegalo] = useState(0);
@@ -926,42 +891,55 @@ function BuscarView() {
   const [loading, setLoading] = useState(false);
   const [added, setAdded] = useState(false);
   const [listening, setListening] = useState(false);
+  const [productsLoaded, setProductsLoaded] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
   const detectedCantidad = useRef<number>(1);
 
-  // Load products when mayorista changes
+  // Load ALL products once when mayorista is set
   useEffect(() => {
     async function load() {
-      if (!mayoristaActivo?.id) return;
+      if (!mayoristaActivo?.id || productsLoaded) return;
+      setLoading(true);
       try {
         const res = await fetch(`/api/productos?mayoristaId=${mayoristaActivo.id}`, { headers: authHeaders() });
         if (res.ok) {
           const data = await res.json();
           setProductos(data);
+          setProductsLoaded(true);
         }
-      } catch {
-        /* ignore */
-      }
+      } catch { /* ignore */ }
+      finally { setLoading(false); }
     }
     load();
-  }, [mayoristaActivo?.id, setProductos]);
+  }, [mayoristaActivo?.id, productsLoaded, setProductos]);
 
-  // Also reload products after upload completes
-  const reloadProducts = async () => {
-    if (!mayoristaActivo?.id) return;
-    try {
-      const res = await fetch(`/api/productos?mayoristaId=${mayoristaActivo.id}`, { headers: authHeaders() });
-      if (res.ok) {
-        const data = await res.json();
-        setProductos(data);
-      }
-    } catch {
-      /* ignore */
-    }
-  };
+  // Client-side search - filter products locally (fast, no API call)
+  const parsed = parseQuantity(query.trim());
+  detectedCantidad.current = parsed.cantidad;
 
-  // Voice search with Web Speech API
+  const normalizedQuery = normalizeText(parsed.cleanQuery || query.trim());
+  const queryWords = normalizedQuery.split(/\s+/).filter((w) => w.length >= 2);
+
+  const results = queryWords.length > 0 && productos.length > 0
+    ? productos.filter((p) => {
+        const desc = normalizeText(p.descripcion || "");
+        const cod = normalizeText(p.codigo || "");
+        return queryWords.every((w) => desc.includes(w) || cod.includes(w));
+      }).slice(0, 50)
+    : [];
+
+  // Show all products when no query
+  const displayResults = query.trim().length < 2
+    ? (productos.length > 0 ? productos.slice(0, 100) : [])
+    : results;
+
+  const handleSearch = useCallback(() => {
+    // Client-side search is already computed above via the reactive filter
+    // This is a no-op trigger for voice search
+  }, []);
+
+  // Voice search
   const toggleVoiceSearch = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -982,108 +960,33 @@ function BuscarView() {
 
     let finalTranscript = "";
     recognition.onresult = (event: any) => {
-      let interimTranscript = "";
+      let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
           finalTranscript += event.results[i][0].transcript;
         } else {
-          interimTranscript += event.results[i][0].transcript;
+          interim += event.results[i][0].transcript;
         }
       }
-      setQuery(finalTranscript + interimTranscript);
+      setQuery(finalTranscript + interim);
     };
 
     recognition.onend = () => {
       setListening(false);
-      // Auto-trigger search after voice input ends
       if (finalTranscript.trim()) {
-        // Small delay to let state update
-        setTimeout(() => {
-          setQuery(finalTranscript);
-          // Trigger search after query is set
-          setTimeout(() => handleSearch(), 100);
-        }, 50);
+        setQuery(finalTranscript);
       }
     };
 
     recognition.onerror = () => {
       setListening(false);
+      toast.error("Error al escuchar. Intentá de nuevo.");
     };
 
     recognitionRef.current = recognition;
     recognition.start();
     setListening(true);
   };
-
-  const [aiSearching, setAiSearching] = useState(false);
-
-  // Parse quantity from query: e.g. "azúcar chango 400 unidades" -> quantity 400, clean query
-  const parseQuantity = (q: string): { cleanedQuery: string; cantidad: number } => {
-    // Pattern: number followed by quantity word (unidades, unidad, unit, cajas, caja, bolsas, bolsa, packs, pack, kilos, kilo, kg, botellas, botella, latas, lata)
-    const qtyPattern = /\b(\d+)\s*(?:unidades?|unit|cajas?|bolsas?|packs?|kilos?|kgs?|kg|botellas?|latas?|docenas?)\b/i;
-    const match = q.match(qtyPattern);
-    if (match) {
-      const cantidad = parseInt(match[1], 10);
-      const cleanedQuery = q.replace(qtyPattern, "").trim();
-      return { cleanedQuery, cantidad: cantidad > 0 ? cantidad : 1 };
-    }
-    // Also try: word followed by number (e.g. "400 unidades")
-    const qtyPattern2 = /\b(\d+)\s*\w*$/;
-    const match2 = q.match(qtyPattern2);
-    if (match2 && parseInt(match2[1], 10) > 1) {
-      // Only match if the number is at the end and looks like a quantity (2-4 digits)
-      const num = parseInt(match2[1], 10);
-      if (num >= 2 && num <= 9999) {
-        const cleanedQuery = q.replace(qtyPattern2, "").trim();
-        return { cleanedQuery, cantidad: num };
-      }
-    }
-    return { cleanedQuery: q, cantidad: 1 };
-  };
-
-  const handleSearch = async () => {
-    if (!query.trim() || !mayoristaActivo?.id) return;
-    // Parse quantity from query
-    const parsed = parseQuantity(query);
-    detectedCantidad.current = parsed.cantidad;
-    setLoading(true);
-    try {
-      const res = await fetch(
-        `/api/productos?mayoristaId=${mayoristaActivo.id}&q=${encodeURIComponent(query)}`,
-        { headers: authHeaders() }
-      );
-      if (res.ok) {
-        const data = await res.json();
-        setResults(data);
-        if (data.length === 0) {
-          toast.info("No encontré nada. Probá con menos palabras.");
-        }
-      }
-    } catch {
-      toast.error("Error de conexión");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Simple search: filter loaded products by text match (no fuzzy, no complex logic)
-  // Use cleaned query (without quantity words) for better matching
-  const parsedQuery = parseQuantity(query.trim());
-  const normalizeText = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  const normalizedQuery = normalizeText(parsedQuery.cleanedQuery || query.trim());
-  const queryWords = normalizedQuery.split(/\s+/).filter(w => w.length >= 2);
-  const meaningfulWords = queryWords.length > 1 ? queryWords.filter(w => w.length >= 3) : queryWords;
-
-  const localResults = meaningfulWords.length > 0 && productos.length > 0
-    ? productos.filter(p => {
-        const desc = normalizeText(p.descripcion || "");
-        const cod = normalizeText(p.codigo || "");
-        return meaningfulWords.some(w => desc.includes(w) || cod.includes(w));
-      }).slice(0, 50)
-    : [];
-
-  // Display: if we have local results show them, otherwise show API results
-  const displayResults = localResults.length > 0 ? localResults : results;
 
   const handleAddToPedido = () => {
     if (!selectedProduct || cantidad < 1) return;
@@ -1105,25 +1008,105 @@ function BuscarView() {
     }, 800);
   };
 
-  // Calculate caja + regalo
-  const handleCajaRegalo = (cajas: number, regaloPorCaja: number) => {
-    setCantidad(cajas);
-    setCantidadRegalo(regaloPorCaja * cajas);
-  };
-
   if (!mayoristaActivo) {
     return (
       <div className="animate-fade-in-up text-center py-20">
         <Package className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
         <h3 className="text-xl font-semibold mb-2">Sin mayorista activo</h3>
         <p className="text-muted-foreground mb-6">Primero configurá un mayorista y cargá tu lista</p>
-        <button
-          onClick={() => setCurrentView("mayorista")}
-          className="px-6 py-3 rounded-xl bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors"
-        >
+        <button onClick={() => setCurrentView("mayorista")} className="px-6 py-3 rounded-xl bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors text-base">
           Ir a mayorista
         </button>
       </div>
+    );
+  }
+
+  // Product detail modal
+  if (selectedProduct) {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="animate-fade-in-up space-y-4">
+        <button onClick={() => setSelectedProduct(null)} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <X className="w-4 h-4" /> Volver a resultados
+        </button>
+
+        <div className="p-6 rounded-2xl border bg-card space-y-5">
+          <div>
+            <span className="px-2.5 py-1 rounded-lg text-xs font-mono font-medium bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
+              {selectedProduct.codigo}
+            </span>
+            <h3 className="font-semibold text-lg mt-3">{selectedProduct.descripcion}</h3>
+            <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
+              ${formatPrice(selectedProduct.precio)}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm font-medium mb-1 block">Cantidad</label>
+              <input
+                type="number"
+                min="1"
+                value={cantidad}
+                onChange={(e) => setCantidad(Math.max(1, parseInt(e.target.value) || 1))}
+                className="w-full px-4 py-3 rounded-xl border bg-background text-foreground text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Regalo (unid.)</label>
+              <input
+                type="number"
+                min="0"
+                value={cantidadRegalo}
+                onChange={(e) => setCantidadRegalo(Math.max(0, parseInt(e.target.value) || 0))}
+                className="w-full px-4 py-3 rounded-xl border bg-background text-foreground text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium mb-1 block">Descuento (%)</label>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              value={descuentoPct}
+              onChange={(e) => setDescuentoPct(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
+              className="w-full px-4 py-3 rounded-xl border bg-background text-foreground text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          <div className="p-4 rounded-xl bg-muted space-y-1">
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Subtotal</span>
+              <span className="font-semibold">${formatPrice(cantidad * selectedProduct.precio)}</span>
+            </div>
+            {descuentoPct > 0 && (
+              <div className="flex justify-between text-sm text-emerald-600">
+                <span>Descuento {descuentoPct}%</span>
+                <span>-${formatPrice(cantidad * selectedProduct.precio * descuentoPct / 100)}</span>
+              </div>
+            )}
+            <div className="flex justify-between text-base font-bold pt-1 border-t">
+              <span>Total</span>
+              <span className="text-emerald-600 dark:text-emerald-400">
+                ${formatPrice(cantidad * selectedProduct.precio * (1 - descuentoPct / 100))}
+              </span>
+            </div>
+          </div>
+
+          <button
+            onClick={handleAddToPedido}
+            disabled={added}
+            className={`w-full py-4 rounded-xl font-semibold text-base transition-all flex items-center justify-center gap-2 ${
+              added
+                ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
+                : "bg-gradient-to-r from-emerald-500 to-emerald-600 text-white shadow-lg hover:from-emerald-600 hover:to-emerald-700"
+            }`}
+          >
+            {added ? <><Check className="w-5 h-5" /> Agregado al pedido</> : <><Plus className="w-5 h-5" /> Agregar al pedido</>}
+          </button>
+        </div>
+      </motion.div>
     );
   }
 
@@ -1132,11 +1115,11 @@ function BuscarView() {
       <div>
         <h2 className="text-2xl font-bold">Buscar Productos</h2>
         <p className="text-muted-foreground mt-1">
-          Escribí código o descripción para encontrar rápido
+          {productos.length > 0 ? `${productos.length} productos cargados` : "Cargando productos..."}
         </p>
       </div>
 
-      {/* Search bar with microphone and AI */}
+      {/* Search bar */}
       <div className="relative">
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
         <input
@@ -1145,282 +1128,100 @@ function BuscarView() {
           placeholder="Escribí o hablá para buscar..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-          className="w-full pl-12 pr-24 py-3.5 rounded-xl border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all text-base"
+          className="w-full pl-12 pr-14 py-3.5 rounded-xl border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all text-base"
           autoFocus
         />
-        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-          {(loading || aiSearching) && (
-            <div className="flex items-center gap-1 mr-1">
-              <Loader2 className="w-4 h-4 animate-spin text-emerald-500" />
-              {aiSearching && <span className="text-[10px] text-emerald-600 font-medium">IA</span>}
-            </div>
-          )}
-          <button
-            onClick={toggleVoiceSearch}
-            className={`p-2 rounded-lg transition-all ${
-              listening
-                ? "bg-red-100 dark:bg-red-900/40 text-red-600 animate-pulse"
-                : "hover:bg-muted text-muted-foreground hover:text-foreground"
-            }`}
-            title={listening ? "Dejar de escuchar" : "Buscar por voz"}
-          >
-            {listening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-          </button>
-        </div>
+        <button
+          onClick={toggleVoiceSearch}
+          className={`absolute right-2 top-1/2 -translate-y-1/2 p-2.5 rounded-lg transition-all ${
+            listening
+              ? "bg-red-100 dark:bg-red-900/40 text-red-600 animate-pulse"
+              : "hover:bg-muted text-muted-foreground hover:text-foreground"
+          }`}
+          title={listening ? "Dejar de escuchar" : "Buscar por voz"}
+        >
+          {listening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+        </button>
       </div>
 
+      {/* Detected quantity hint */}
+      {detectedCantidad.current > 1 && query.trim().length > 2 && (
+        <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+          <Sparkles className="w-4 h-4" />
+          Cantidad detectada: {detectedCantidad.current} unidades
+        </div>
+      )}
+
+      {/* Loading state */}
+      {loading && (
+        <div className="text-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-emerald-500 mx-auto mb-2" />
+          <p className="text-sm text-muted-foreground">Cargando {productos.length} productos...</p>
+        </div>
+      )}
+
       {/* Results */}
-      {!selectedProduct ? (
-        <div className="space-y-2 max-h-[calc(100vh-320px)] overflow-y-auto scrollbar-thin">
-          {query.trim().length < 2 && (
-            <div className="text-center py-8 text-muted-foreground">
-              <Search className="w-10 h-10 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">Escribí al menos 2 caracteres</p>
+      {!loading && (
+        <div className="space-y-2 max-h-[calc(100vh-280px)] overflow-y-auto scrollbar-thin">
+          {query.trim().length < 2 && productos.length === 0 && (
+            <div className="text-center py-12 text-muted-foreground">
+              <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
+              <p className="text-sm">Cargando productos...</p>
             </div>
           )}
-          {displayResults.length === 0 && query.trim().length >= 2 && !loading && (
-            <div className="text-center py-8 text-muted-foreground">
-              <AlertCircle className="w-10 h-10 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">No se encontraron productos</p>
-              <p className="text-xs mt-1">Probá con otras palabras</p>
+
+          {query.trim().length >= 2 && displayResults.length === 0 && (
+            <div className="text-center py-12 text-muted-foreground">
+              <AlertCircle className="w-12 h-12 mx-auto mb-3 opacity-30" />
+              <p className="text-sm font-medium">No se encontraron productos</p>
+              <p className="text-xs mt-1">Probá con menos palabras o otra búsqueda</p>
             </div>
           )}
+
           {displayResults.map((product: any, idx: number) => (
             <motion.button
               key={product.id}
-              initial={{ opacity: 0, y: 10 }}
+              initial={{ opacity: 0, y: 5 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: idx * 0.03 }}
+              transition={{ delay: Math.min(idx * 0.02, 0.5) }}
               onClick={() => {
                 setSelectedProduct(product);
                 setCantidad(detectedCantidad.current);
                 setCantidadRegalo(0);
                 setDescuentoPct(0);
               }}
-              className="w-full text-left p-4 rounded-xl border bg-card hover:border-emerald-300 dark:hover:border-emerald-700 transition-all"
+              className="w-full text-left p-4 rounded-xl border bg-card hover:border-emerald-300 dark:hover:border-emerald-700 transition-all active:scale-[0.99]"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 shrink-0">
                       {product.codigo}
                     </span>
                   </div>
-                  <p className="font-medium text-sm">{product.descripcion}</p>
+                  <p className="font-medium text-sm leading-snug">{product.descripcion}</p>
                 </div>
                 <div className="text-right shrink-0">
-                  <p className="font-bold text-emerald-600 dark:text-emerald-400">
-                    ${product.precio.toLocaleString("es-AR", { minimumFractionDigits: 2 })}
+                  <p className="font-bold text-emerald-600 dark:text-emerald-400 text-sm">
+                    ${formatPrice(product.precio)}
                   </p>
                 </div>
               </div>
             </motion.button>
           ))}
+
+          {displayResults.length === productos.length && productos.length > 100 && query.trim().length < 2 && (
+            <p className="text-center text-xs text-muted-foreground py-4">
+              Mostrando los primeros 100 productos. Escribí para filtrar.
+            </p>
+          )}
+
+          {query.trim().length >= 2 && results.length > 0 && (
+            <p className="text-center text-xs text-muted-foreground py-2">
+              {results.length} resultado{results.length !== 1 ? "s" : ""} encontrado{results.length !== 1 ? "s" : ""}
+            </p>
+          )}
         </div>
-      ) : (
-        /* Product selected - add to order */
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="p-6 rounded-2xl border bg-card space-y-5"
-        >
-          <div className="flex items-start justify-between">
-            <div>
-              <span className="px-2 py-0.5 rounded text-xs font-mono font-medium bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
-                {selectedProduct.codigo}
-              </span>
-              <h3 className="font-semibold text-lg mt-2">{selectedProduct.descripcion}</h3>
-              <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
-                ${selectedProduct.precio.toLocaleString("es-AR", { minimumFractionDigits: 2 })}
-              </p>
-            </div>
-            <button
-              onClick={() => setSelectedProduct(null)}
-              className="p-2 rounded-lg hover:bg-muted transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-
-          {/* Cantidad */}
-          <div className="space-y-4">
-            <div>
-              <label className="text-sm font-medium mb-2 block flex items-center gap-2">
-                <Package className="w-4 h-4" />
-                Cantidad
-              </label>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setCantidad(Math.max(1, cantidad - 1))}
-                  className="w-10 h-10 rounded-lg border flex items-center justify-center hover:bg-muted transition-colors text-lg font-bold"
-                >
-                  −
-                </button>
-                <input
-                  type="number"
-                  min="1"
-                  value={cantidad}
-                  onChange={(e) => setCantidad(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-24 text-center px-3 py-2 rounded-lg border bg-background text-foreground text-lg font-semibold"
-                />
-                <button
-                  onClick={() => setCantidad(cantidad + 1)}
-                  className="w-10 h-10 rounded-lg border flex items-center justify-center hover:bg-muted transition-colors text-lg font-bold"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-
-            {/* Cantidad regalo (cajas + regalo) */}
-            <div>
-              <label className="text-sm font-medium mb-2 block flex items-center gap-2">
-                <Gift className="w-4 h-4" />
-                Cantidad de regalo (unit. extra)
-              </label>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setCantidadRegalo(Math.max(0, cantidadRegalo - 1))}
-                  className="w-10 h-10 rounded-lg border flex items-center justify-center hover:bg-muted transition-colors text-lg font-bold"
-                >
-                  −
-                </button>
-                <input
-                  type="number"
-                  min="0"
-                  value={cantidadRegalo}
-                  onChange={(e) => setCantidadRegalo(Math.max(0, parseInt(e.target.value) || 0))}
-                  className="w-24 text-center px-3 py-2 rounded-lg border bg-background text-foreground text-lg font-semibold"
-                />
-                <button
-                  onClick={() => setCantidadRegalo(cantidadRegalo + 1)}
-                  className="w-10 h-10 rounded-lg border flex items-center justify-center hover:bg-muted transition-colors text-lg font-bold"
-                >
-                  +
-                </button>
-              </div>
-              {/* Quick: cajas + regalo */}
-              <div className="mt-2 flex flex-wrap gap-2">
-                <button
-                  onClick={() => handleCajaRegalo(12, 1)}
-                  className="text-[11px] px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-900/60 transition-colors font-medium"
-                >
-                  12 + 1 regalo
-                </button>
-                <button
-                  onClick={() => handleCajaRegalo(24, 2)}
-                  className="text-[11px] px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-900/60 transition-colors font-medium"
-                >
-                  24 + 2 regalo
-                </button>
-                <button
-                  onClick={() => handleCajaRegalo(6, 1)}
-                  className="text-[11px] px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-900/60 transition-colors font-medium"
-                >
-                  6 + 1 regalo
-                </button>
-                <button
-                  onClick={() => handleCajaRegalo(12, 0)}
-                  className="text-[11px] px-2.5 py-1 rounded-full bg-muted text-muted-foreground hover:bg-muted/80 transition-colors font-medium"
-                >
-                  12 cajas
-                </button>
-                <button
-                  onClick={() => handleCajaRegalo(24, 0)}
-                  className="text-[11px] px-2.5 py-1 rounded-full bg-muted text-muted-foreground hover:bg-muted/80 transition-colors font-medium"
-                >
-                  24 cajas
-                </button>
-              </div>
-            </div>
-
-            {/* Descuento */}
-            <div>
-              <label className="text-sm font-medium mb-2 block flex items-center gap-2">
-                <Percent className="w-4 h-4" />
-                Descuento por línea
-              </label>
-              <div className="flex flex-wrap gap-2">
-                {[0, 3, 5, 10, 15, 20].map((pct) => (
-                  <button
-                    key={pct}
-                    onClick={() => setDescuentoPct(pct)}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                      descuentoPct === pct
-                        ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700"
-                        : "bg-muted text-muted-foreground hover:bg-muted/80"
-                    }`}
-                  >
-                    {pct}%
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Subtotal */}
-          <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 space-y-2">
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">
-                {cantidad} × ${selectedProduct.precio.toLocaleString("es-AR")}
-              </span>
-              <span>
-                ${((cantidad + cantidadRegalo) * selectedProduct.precio).toLocaleString("es-AR", { minimumFractionDigits: 2 })}
-              </span>
-            </div>
-            {cantidadRegalo > 0 && (
-              <div className="flex justify-between text-sm text-emerald-600">
-                <span>+ {cantidadRegalo} de regalo</span>
-                <span>${(cantidadRegalo * selectedProduct.precio).toLocaleString("es-AR", { minimumFractionDigits: 2 })}</span>
-              </div>
-            )}
-            {descuentoPct > 0 && (
-              <div className="flex justify-between text-sm text-destructive">
-                <span>- {descuentoPct}% descuento</span>
-                <span>
-                  -$
-                  {(
-                    ((cantidad + cantidadRegalo) * selectedProduct.precio * descuentoPct) /
-                    100
-                  ).toLocaleString("es-AR", { minimumFractionDigits: 2 })}
-                </span>
-              </div>
-            )}
-            <div className="flex justify-between font-bold text-lg pt-2 border-t border-emerald-200 dark:border-emerald-800">
-              <span>Subtotal</span>
-              <span className="text-emerald-600 dark:text-emerald-400">
-                $
-                {(
-                  ((cantidad + cantidadRegalo) * selectedProduct.precio * (100 - descuentoPct)) /
-                  100
-                ).toLocaleString("es-AR", { minimumFractionDigits: 2 })}
-              </span>
-            </div>
-          </div>
-
-          {/* Add button */}
-          <button
-            onClick={handleAddToPedido}
-            className={`w-full py-3.5 rounded-xl font-semibold text-white transition-all flex items-center justify-center gap-2 ${
-              added
-                ? "bg-green-500"
-                : "bg-gradient-to-r from-emerald-500 to-emerald-600 shadow-lg shadow-emerald-200 dark:shadow-emerald-900/30 hover:from-emerald-600 hover:to-emerald-700"
-            }`}
-          >
-            {added ? (
-              <>
-                <Check className="w-5 h-5" />
-                ¡Agregado al pedido!
-              </>
-            ) : (
-              <>
-                <Plus className="w-5 h-5" />
-                Agregar al pedido
-              </>
-            )}
-          </button>
-        </motion.div>
       )}
     </div>
   );
@@ -1428,211 +1229,67 @@ function BuscarView() {
 
 // ==================== PEDIDO VIEW ====================
 function PedidoView() {
-  const {
-    pedidoItems,
-    removeItem,
-    updateItem,
-    descuentoGlobal,
-    setDescuentoGlobal,
-    clearPedido,
-    getTotalPedido,
-    mayoristaActivo,
-    clienteActivo,
-    setCurrentView,
-  } = useMayolistaStore();
-  const [observaciones, setObservaciones] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [showShare, setShowShare] = useState(false);
+  const { pedidoItems, removeItem, updateItem, clearPedido, getTotalPedido, setCurrentView, mayoristaActivo } = useMayolistaStore();
+  const [sending, setSending] = useState(false);
 
   const total = getTotalPedido();
 
-  const handleSavePedido = async () => {
+  const handleSend = async () => {
     if (pedidoItems.length === 0) {
       toast.error("El pedido está vacío");
       return;
     }
-    setSaving(true);
+    setSending(true);
     try {
       const res = await fetch("/api/pedidos", {
         method: "POST",
-        headers: authHeaders(),
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
-          clienteId: clienteActivo?.id || null,
           mayoristaId: mayoristaActivo?.id,
           items: pedidoItems.map((item) => ({
+            productoId: item.productoId,
             cantidad: item.cantidad,
             cantidadRegalo: item.cantidadRegalo,
-            precioUnitario: item.precioUnitario,
             descuentoPct: item.descuentoPct,
-            productoId: item.productoId,
+            precioUnitario: item.precioUnitario,
           })),
-          observaciones,
-          descuentoPct: descuentoGlobal,
         }),
       });
-
       if (res.ok) {
-        toast.success("¡Pedido guardado correctamente!");
+        toast.success("Pedido enviado OK");
         clearPedido();
-        setObservaciones("");
         setCurrentView("historial");
       } else {
-        toast.error("Error al guardar el pedido");
+        toast.error("Error al enviar pedido");
       }
     } catch {
       toast.error("Error de conexión");
     } finally {
-      setSaving(false);
+      setSending(false);
     }
   };
 
-  const buildPedidoText = () => {
-    let text = `📋 PEDIDO - ${mayoristaActivo?.nombre || ""}\n`;
-    if (clienteActivo) {
-      text += `👤 Cliente: ${clienteActivo.nombre}\n`;
-    }
-    text += `📅 ${new Date().toLocaleDateString("es-AR")}\n`;
-    text += `─────────────────\n\n`;
-
-    pedidoItems.forEach((item, idx) => {
-      const subtotal =
-        (item.cantidad + item.cantidadRegalo) *
-        item.precioUnitario *
-        (1 - item.descuentoPct / 100);
-      text += `${idx + 1}. ${item.producto.descripcion}\n`;
-      text += `   Código: ${item.producto.codigo}\n`;
-      text += `   Cant: ${item.cantidad}`;
-      if (item.cantidadRegalo > 0) text += ` (+${item.cantidadRegalo} regalo)`;
-      if (item.descuentoPct > 0) text += ` (-${item.descuentoPct}%)`;
-      text += `\n   $${subtotal.toLocaleString("es-AR", { minimumFractionDigits: 2 })}\n\n`;
-    });
-
-    if (descuentoGlobal > 0) {
-      text += `Descuento global: -${descuentoGlobal}%\n`;
-    }
-    text += `─────────────────\n`;
-    text += `💰 TOTAL: $${total.toLocaleString("es-AR", { minimumFractionDigits: 2 })}\n`;
-    if (observaciones) text += `\n📝 ${observaciones}`;
-
-    return text;
-  };
-
-  const shareWhatsApp = () => {
-    const text = buildPedidoText();
+  const handleShareWhatsApp = () => {
+    if (pedidoItems.length === 0) return;
+    const text = `*Pedido - ${mayoristaActivo?.nombre || "Mayorista"}*\n\n` +
+      pedidoItems.map((item) =>
+        `- ${item.producto.descripcion} x${item.cantidad}${item.cantidadRegalo > 0 ? ` (+${item.cantidadRegalo} regalo)` : ""} - $${formatPrice(item.precioUnitario * item.cantidad * (1 - item.descuentoPct / 100))}`
+      ).join("\n") +
+      `\n\n*Total: $${formatPrice(total)}*`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   };
 
-  const shareEmail = () => {
-    const text = buildPedidoText();
-    const subject = `Pedido - ${mayoristaActivo?.nombre || "Mayolista-OK"}`;
-    window.open(
-      `mailto:${clienteActivo?.email || ""}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`,
-      "_blank"
-    );
-  };
-
-  const downloadExcel = async () => {
-    try {
-      const XLSX = await import("xlsx");
-      const data = pedidoItems.map((item, idx) => ({
-        "#": idx + 1,
-        Código: item.producto.codigo,
-        Descripción: item.producto.descripcion,
-        Cantidad: item.cantidad,
-        "Regalo": item.cantidadRegalo || 0,
-        "Precio Unit.": item.precioUnitario,
-        "Descuento %": item.descuentoPct || 0,
-        Subtotal: (
-          (item.cantidad + item.cantidadRegalo) *
-          item.precioUnitario *
-          (1 - item.descuentoPct / 100)
-        ).toFixed(2),
-      }));
-
-      // Add total row
-      data.push({
-        "#": "",
-        Código: "",
-        Descripción: "TOTAL",
-        Cantidad: "",
-        "Regalo": "",
-        "Precio Unit.": "",
-        "Descuento %": descuentoGlobal ? `${descuentoGlobal}%` : "",
-        Subtotal: total.toFixed(2),
-      });
-
-      const ws = XLSX.utils.json_to_sheet(data);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Pedido");
-      XLSX.writeFile(wb, `pedido_${mayoristaActivo?.nombre || "mayolista"}.xlsx`);
-      toast.success("Excel descargado");
-    } catch {
-      toast.error("Error al generar Excel");
-    }
-  };
-
-  const downloadCSV = () => {
-    let csv = "N°,Código,Descripción,Cantidad,Regalo,Precio Unit.,Descuento %,Subtotal\n";
-    pedidoItems.forEach((item, idx) => {
-      const subtotal =
-        (item.cantidad + item.cantidadRegalo) *
-        item.precioUnitario *
-        (1 - item.descuentoPct / 100);
-      csv += `${idx + 1},"${item.producto.codigo}","${item.producto.descripcion}",${item.cantidad},${item.cantidadRegalo},${item.precioUnitario},${item.descuentoPct},${subtotal.toFixed(2)}\n`;
-    });
-    csv += `,,,,,,TOTAL,${total.toFixed(2)}\n`;
-
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `pedido_${mayoristaActivo?.nombre || "mayolista"}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success("CSV descargado");
-  };
-
-  const downloadPDF = () => {
-    // Build a printable HTML page
-    const pedidoHtml = buildPedidoText().replace(/\n/g, "<br>");
-    const printWindow = window.open("", "_blank");
-    if (printWindow) {
-      printWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>Pedido - ${mayoristaActivo?.nombre || "Mayolista-OK"}</title>
-          <style>
-            body { font-family: 'Segoe UI', sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; color: #333; }
-            h1 { color: #059669; font-size: 24px; }
-            .total { font-size: 20px; font-weight: bold; color: #059669; margin-top: 20px; }
-            @media print { body { margin: 0; } }
-          </style>
-        </head>
-        <body>
-          <h1>🛒 Pedido</h1>
-          <div>${pedidoHtml}</div>
-        </body>
-        </html>
-      `);
-      printWindow.document.close();
-      printWindow.print();
-      toast.success("PDF listo para imprimir");
-    }
-  };
-
-  if (pedidoItems.length === 0 && !showShare) {
+  if (pedidoItems.length === 0) {
     return (
-      <div className="animate-fade-in-up text-center py-20">
-        <ShoppingCart className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-        <h3 className="text-xl font-semibold mb-2">Tu pedido está vacío</h3>
-        <p className="text-muted-foreground mb-6">Buscá productos y agregalos a tu pedido</p>
-        <button
-          onClick={() => setCurrentView("buscar")}
-          className="px-6 py-3 rounded-xl bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors"
-        >
-          Ir a buscar
-        </button>
+      <div className="animate-fade-in-up space-y-4">
+        <h2 className="text-2xl font-bold">Mi Pedido</h2>
+        <div className="text-center py-16">
+          <ShoppingCart className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-30" />
+          <p className="text-muted-foreground">Tu pedido está vacío</p>
+          <button onClick={() => setCurrentView("buscar")} className="mt-4 px-6 py-3 rounded-xl bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors">
+            Buscar productos
+          </button>
+        </div>
       </div>
     );
   }
@@ -1640,232 +1297,83 @@ function PedidoView() {
   return (
     <div className="animate-fade-in-up space-y-4">
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Tu Pedido</h2>
-          <p className="text-muted-foreground mt-0.5 text-sm">
-            {pedidoItems.length} producto{pedidoItems.length !== 1 ? "s" : ""}
-            {clienteActivo && ` · ${clienteActivo.nombre}`}
-          </p>
-        </div>
-        {pedidoItems.length > 0 && (
-          <button
-            onClick={() => clearPedido()}
-            className="text-sm text-destructive hover:underline flex items-center gap-1"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            Vaciar
-          </button>
-        )}
+        <h2 className="text-2xl font-bold">Mi Pedido</h2>
+        <span className="text-sm text-muted-foreground">{pedidoItems.length} ítems</span>
       </div>
 
-      {/* Items list */}
-      <div className="space-y-2 max-h-[calc(100vh-420px)] overflow-y-auto scrollbar-thin">
-        {pedidoItems.map((item, idx) => {
-          const subtotal =
-            (item.cantidad + item.cantidadRegalo) *
-            item.precioUnitario *
-            (1 - item.descuentoPct / 100);
-          return (
-            <motion.div
-              key={item.productoId}
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: idx * 0.05 }}
-              className="p-4 rounded-xl border bg-card space-y-3"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-xs text-muted-foreground">#{idx + 1}</span>
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-muted text-muted-foreground">
-                      {item.producto.codigo}
-                    </span>
-                  </div>
-                  <p className="font-medium text-sm leading-tight">{item.producto.descripcion}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    $ {item.precioUnitario.toLocaleString("es-AR")} c/u
-                  </p>
-                </div>
-                <button
-                  onClick={() => removeItem(item.productoId)}
-                  className="p-1.5 rounded-lg hover:bg-destructive/10 hover:text-destructive transition-colors shrink-0"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Quantity controls */}
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-muted-foreground">Cant:</span>
-                  <button
-                    onClick={() =>
-                      item.cantidad > 1 && updateItem(item.productoId, { cantidad: item.cantidad - 1 })
-                    }
-                    className="w-7 h-7 rounded border flex items-center justify-center hover:bg-muted transition-colors text-xs font-bold"
-                  >
-                    −
-                  </button>
-                  <input
-                    type="number"
-                    min="1"
-                    value={item.cantidad}
-                    onChange={(e) =>
-                      updateItem(item.productoId, {
-                        cantidad: Math.max(1, parseInt(e.target.value) || 1),
-                      })
-                    }
-                    className="w-14 text-center px-1 py-1 rounded border bg-background text-foreground text-sm font-semibold"
-                  />
-                  <button
-                    onClick={() => updateItem(item.productoId, { cantidad: item.cantidad + 1 })}
-                    className="w-7 h-7 rounded border flex items-center justify-center hover:bg-muted transition-colors text-xs font-bold"
-                  >
-                    +
-                  </button>
-                </div>
-
-                {item.cantidadRegalo > 0 && (
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-medium">
-                    +{item.cantidadRegalo} regalo
-                  </span>
-                )}
-
-                {item.descuentoPct > 0 && (
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-medium">
-                    -{item.descuentoPct}%
-                  </span>
-                )}
-
-                <div className="ml-auto">
-                  <p className="font-bold text-emerald-600 dark:text-emerald-400 text-sm">
-                    ${subtotal.toLocaleString("es-AR", { minimumFractionDigits: 2 })}
-                  </p>
-                </div>
-              </div>
-            </motion.div>
-          );
-        })}
-      </div>
-
-      {/* Descuento global + Observaciones */}
-      <div className="space-y-3 p-4 rounded-xl border bg-card">
-        <div>
-          <label className="text-sm font-medium mb-2 block flex items-center gap-2">
-            <Percent className="w-4 h-4" />
-            Descuento general
-          </label>
-          <div className="flex flex-wrap gap-2">
-            {[0, 3, 5, 10, 15, 20].map((pct) => (
-              <button
-                key={pct}
-                onClick={() => setDescuentoGlobal(pct)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                  descuentoGlobal === pct
-                    ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700"
-                    : "bg-muted text-muted-foreground hover:bg-muted/80"
-                }`}
-              >
-                {pct}%
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <label className="text-sm font-medium mb-1 block">Observaciones</label>
-          <textarea
-            placeholder="Notas adicionales para el pedido..."
-            value={observaciones}
-            onChange={(e) => setObservaciones(e.target.value)}
-            className="w-full px-4 py-2.5 rounded-xl border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all text-sm resize-none"
-            rows={2}
-          />
-        </div>
-      </div>
-
-      {/* Total + Actions */}
-      <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white space-y-3">
-        <div className="flex justify-between items-center">
-          <span className="text-emerald-100">Total del pedido</span>
-          <span className="text-2xl font-bold">${total.toLocaleString("es-AR", { minimumFractionDigits: 2 })}</span>
-        </div>
-        {descuentoGlobal > 0 && (
-          <p className="text-emerald-200 text-xs">
-            Incluye {descuentoGlobal}% de descuento general
-          </p>
-        )}
-
-        <div className="flex gap-2 pt-2">
-          <button
-            onClick={handleSavePedido}
-            disabled={saving}
-            className="flex-1 py-3 rounded-xl bg-white text-emerald-700 font-semibold hover:bg-emerald-50 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-            Guardar
-          </button>
-          <button
-            onClick={() => setShowShare(!showShare)}
-            className="px-4 py-3 rounded-xl bg-white/20 text-white font-semibold hover:bg-white/30 transition-colors flex items-center justify-center gap-2"
-          >
-            <Share2 className="w-5 h-5" />
-          </button>
-        </div>
-      </div>
-
-      {/* Share options */}
-      <AnimatePresence>
-        {showShare && (
+      <div className="space-y-2 max-h-[calc(100vh-320px)] overflow-y-auto scrollbar-thin">
+        {pedidoItems.map((item) => (
           <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            className="overflow-hidden"
+            key={item.productoId}
+            layout
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="p-4 rounded-xl border bg-card"
           >
-            <div className="p-4 rounded-xl border bg-card space-y-2">
-              <h4 className="font-semibold text-sm mb-3">Compartir pedido</h4>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={shareWhatsApp}
-                  className="flex items-center gap-2 p-3 rounded-xl bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-950/50 transition-colors text-sm font-medium"
-                >
-                  <Phone className="w-4 h-4" />
-                  WhatsApp
-                </button>
-                <button
-                  onClick={shareEmail}
-                  className="flex items-center gap-2 p-3 rounded-xl bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-950/50 transition-colors text-sm font-medium"
-                >
-                  <Send className="w-4 h-4" />
-                  Email
-                </button>
-                <button
-                  onClick={downloadExcel}
-                  className="flex items-center gap-2 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-950/50 transition-colors text-sm font-medium"
-                >
-                  <FileSpreadsheet className="w-4 h-4" />
-                  Excel
-                </button>
-                <button
-                  onClick={downloadCSV}
-                  className="flex items-center gap-2 p-3 rounded-xl bg-purple-50 dark:bg-purple-950/30 text-purple-700 dark:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-950/50 transition-colors text-sm font-medium"
-                >
-                  <Download className="w-4 h-4" />
-                  CSV
-                </button>
-                <button
-                  onClick={downloadPDF}
-                  className="flex items-center gap-2 p-3 rounded-xl bg-orange-50 dark:bg-orange-950/30 text-orange-700 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-950/50 transition-colors text-sm font-medium col-span-2"
-                >
-                  <Eye className="w-4 h-4" />
-                  Imprimir / PDF
-                </button>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-sm leading-snug">{item.producto.descripcion}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  ${formatPrice(item.precioUnitario)} c/u · {item.cantidadRegalo > 0 && `${item.cantidadRegalo} regalo · `}{item.descuentoPct > 0 && `${item.descuentoPct}% dto`}
+                </p>
               </div>
+              <button onClick={() => removeItem(item.productoId)} className="p-1.5 rounded-lg hover:bg-destructive/10 hover:text-destructive transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex items-center gap-2 mt-3">
+              <button
+                onClick={() => updateItem(item.productoId, { cantidad: Math.max(1, item.cantidad - 1) })}
+                className="w-8 h-8 rounded-lg border flex items-center justify-center hover:bg-muted transition-colors font-bold"
+              >
+                -
+              </button>
+              <input
+                type="number"
+                value={item.cantidad}
+                onChange={(e) => updateItem(item.productoId, { cantidad: Math.max(1, parseInt(e.target.value) || 1) })}
+                className="w-14 h-8 rounded-lg border bg-background text-center text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <button
+                onClick={() => updateItem(item.productoId, { cantidad: item.cantidad + 1 })}
+                className="w-8 h-8 rounded-lg border flex items-center justify-center hover:bg-muted transition-colors font-bold"
+              >
+                +
+              </button>
+              <span className="ml-auto font-bold text-sm">
+                ${formatPrice(item.precioUnitario * item.cantidad * (1 - item.descuentoPct / 100))}
+              </span>
             </div>
           </motion.div>
-        )}
-      </AnimatePresence>
+        ))}
+      </div>
+
+      {/* Total & Actions */}
+      <div className="sticky bottom-20 md:bottom-4 bg-card border rounded-2xl p-4 space-y-3 shadow-lg">
+        <div className="flex justify-between items-center">
+          <span className="font-semibold text-lg">Total</span>
+          <span className="font-bold text-2xl text-emerald-600 dark:text-emerald-400">${formatPrice(total)}</span>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={handleShareWhatsApp}
+            className="flex-1 py-3 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 transition-colors flex items-center justify-center gap-2 text-sm"
+          >
+            <Send className="w-4 h-4" />
+            WhatsApp
+          </button>
+          <button
+            onClick={handleSend}
+            disabled={sending}
+            className="flex-1 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
+          >
+            {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Check className="w-4 h-4" /> Confirmar</>}
+          </button>
+        </div>
+        <button onClick={() => { if (confirm("¿Vaciar el pedido?")) clearPedido(); }} className="w-full py-2 text-xs text-destructive hover:underline text-center">
+          Vaciar pedido
+        </button>
+      </div>
     </div>
   );
 }
@@ -1873,212 +1381,81 @@ function PedidoView() {
 // ==================== CLIENTES VIEW ====================
 function ClientesView() {
   const { clienteActivo, setClienteActivo } = useMayolistaStore();
-  const [clientes, setClientes] = useState<any[]>([]);
-  const [showForm, setShowForm] = useState(false);
   const [nombre, setNombre] = useState("");
   const [telefono, setTelefono] = useState("");
   const [email, setEmail] = useState("");
   const [direccion, setDireccion] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [clientes, setClientes] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    loadClientes();
+  }, []);
 
   const loadClientes = async () => {
     try {
       const res = await fetch("/api/clientes", { headers: authHeaders() });
       if (res.ok) setClientes(await res.json());
-    } catch {
-      /* ignore */
-    } finally {
-      setLoading(false);
-    }
+    } catch { /* ignore */ }
   };
 
-  useEffect(() => { loadClientes(); }, []);
-
   const handleCreate = async () => {
-    if (!nombre.trim()) {
-      toast.error("El nombre es obligatorio");
-      return;
-    }
+    if (!nombre.trim()) { toast.error("Ingresá el nombre"); return; }
+    setLoading(true);
     try {
       const res = await fetch("/api/clientes", {
         method: "POST",
-        headers: authHeaders(),
-        body: JSON.stringify({
-          nombre: nombre.trim(),
-          telefono: telefono.trim() || null,
-          email: email.trim() || null,
-          direccion: direccion.trim() || null,
-        }),
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ nombre: nombre.trim(), telefono, email, direccion }),
       });
       if (res.ok) {
         toast.success("Cliente creado");
-        setNombre("");
-        setTelefono("");
-        setEmail("");
-        setDireccion("");
-        setShowForm(false);
+        setNombre(""); setTelefono(""); setEmail(""); setDireccion("");
         loadClientes();
-      } else {
-        toast.error("Error al crear cliente");
-      }
-    } catch {
-      toast.error("Error de conexión");
-    }
+      } else toast.error("Error");
+    } catch { toast.error("Error de conexión"); }
+    finally { setLoading(false); }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
-      </div>
-    );
-  }
-
   return (
-    <div className="animate-fade-in-up space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Mis Clientes</h2>
-          <p className="text-muted-foreground mt-0.5 text-sm">{clientes.length} registrado{clientes.length !== 1 ? "s" : ""}</p>
-        </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="px-4 py-2 rounded-xl bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors flex items-center gap-2 text-sm"
-        >
-          <Plus className="w-4 h-4" />
-          Nuevo
+    <div className="animate-fade-in-up space-y-6">
+      <h2 className="text-2xl font-bold">Mis Clientes</h2>
+
+      <div className="p-5 rounded-2xl border bg-card space-y-3">
+        <h3 className="font-semibold">Nuevo cliente</h3>
+        <input type="text" placeholder="Nombre" value={nombre} onChange={(e) => setNombre(e.target.value)} className="w-full px-4 py-3 rounded-xl border bg-background focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+        <input type="tel" placeholder="Teléfono (opcional)" value={telefono} onChange={(e) => setTelefono(e.target.value)} className="w-full px-4 py-3 rounded-xl border bg-background focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+        <button onClick={handleCreate} disabled={loading} className="w-full py-3 rounded-xl bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-50 text-base">
+          {loading ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : "Crear cliente"}
         </button>
       </div>
 
-      {/* Active client banner */}
-      {clienteActivo && (
-        <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Check className="w-4 h-4 text-emerald-600" />
-            <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
-              Pedido para: {clienteActivo.nombre}
-            </span>
-          </div>
-          <button
-            onClick={() => setClienteActivo(null)}
-            className="text-xs text-muted-foreground hover:text-foreground"
-          >
-            Quitar
-          </button>
+      {clientes.length === 0 ? (
+        <div className="text-center py-12 text-muted-foreground">
+          <Users className="w-12 h-12 mx-auto mb-3 opacity-30" />
+          <p className="text-sm">No hay clientes cargados</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {clientes.map((c: any) => (
+            <button
+              key={c.id}
+              onClick={() => { setClienteActivo(c); toast.success(`Cliente ${c.nombre} seleccionado`); }}
+              className={`w-full flex items-center gap-3 p-4 rounded-xl border bg-card hover:border-emerald-300 transition-all text-left ${clienteActivo?.id === c.id ? "border-emerald-400 bg-emerald-50/50" : ""}`}
+            >
+              <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
+                <Users className="w-5 h-5 text-emerald-600" />
+              </div>
+              <div>
+                <p className="font-medium text-sm">{c.nombre}</p>
+                {c.telefono && <p className="text-xs text-muted-foreground flex items-center gap-1"><Phone className="w-3 h-3" /> {c.telefono}</p>}
+                {c.direccion && <p className="text-xs text-muted-foreground flex items-center gap-1"><MapPin className="w-3 h-3" /> {c.direccion}</p>}
+              </div>
+              {clienteActivo?.id === c.id && <Check className="w-5 h-5 text-emerald-600 ml-auto" />}
+            </button>
+          ))}
         </div>
       )}
-
-      {/* Form */}
-      <AnimatePresence>
-        {showForm && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            className="overflow-hidden"
-          >
-            <div className="p-4 rounded-xl border bg-card space-y-3">
-              <h3 className="font-semibold text-sm">Nuevo cliente</h3>
-              <div className="space-y-3">
-                <input
-                  type="text"
-                  placeholder="Nombre del cliente"
-                  value={nombre}
-                  onChange={(e) => setNombre(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm"
-                />
-                <input
-                  type="tel"
-                  placeholder="Teléfono (opcional)"
-                  value={telefono}
-                  onChange={(e) => setTelefono(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm"
-                />
-                <input
-                  type="email"
-                  placeholder="Email (opcional)"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm"
-                />
-                <input
-                  type="text"
-                  placeholder="Dirección (opcional)"
-                  value={direccion}
-                  onChange={(e) => setDireccion(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm"
-                />
-                <button
-                  onClick={handleCreate}
-                  disabled={!nombre.trim()}
-                  className="w-full py-2.5 rounded-xl bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-50 text-sm"
-                >
-                  Guardar cliente
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Client list */}
-      <div className="space-y-2 max-h-[calc(100vh-320px)] overflow-y-auto scrollbar-thin">
-        {clientes.length === 0 && (
-          <div className="text-center py-12 text-muted-foreground">
-            <Users className="w-12 h-12 mx-auto mb-3 opacity-50" />
-            <p className="text-sm">Aún no tenés clientes registrados</p>
-          </div>
-        )}
-        {clientes.map((c) => (
-          <div
-            key={c.id}
-            className={`p-4 rounded-xl border bg-card transition-all ${
-              clienteActivo?.id === c.id
-                ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/20"
-                : ""
-            }`}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-sm">{c.nombre}</p>
-                <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
-                  {c.telefono && (
-                    <span className="text-xs text-muted-foreground flex items-center gap-1">
-                      <Phone className="w-3 h-3" />
-                      {c.telefono}
-                    </span>
-                  )}
-                  {c.email && (
-                    <span className="text-xs text-muted-foreground flex items-center gap-1">
-                      <Send className="w-3 h-3" />
-                      {c.email}
-                    </span>
-                  )}
-                  {c.direccion && (
-                    <span className="text-xs text-muted-foreground flex items-center gap-1">
-                      <MapPin className="w-3 h-3" />
-                      {c.direccion}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  setClienteActivo(c);
-                  toast.success(`Cliente "${c.nombre}" seleccionado para el pedido`);
-                }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  clienteActivo?.id === c.id
-                    ? "bg-emerald-200 dark:bg-emerald-800 text-emerald-800 dark:text-emerald-200"
-                    : "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-900/60"
-                }`}
-              >
-                {clienteActivo?.id === c.id ? "Seleccionado" : "Seleccionar"}
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -2086,209 +1463,107 @@ function ClientesView() {
 // ==================== HISTORIAL VIEW ====================
 function HistorialView() {
   const [pedidos, setPedidos] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [expanded, setExpanded] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
       try {
         const res = await fetch("/api/pedidos", { headers: authHeaders() });
         if (res.ok) setPedidos(await res.json());
-      } catch {
-        /* ignore */
-      } finally {
-        setLoading(false);
-      }
+      } catch { /* ignore */ }
     }
     load();
   }, []);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
-      </div>
-    );
-  }
-
   return (
-    <div className="animate-fade-in-up space-y-4">
-      <div>
-        <h2 className="text-2xl font-bold">Historial de Pedidos</h2>
-        <p className="text-muted-foreground mt-0.5 text-sm">{pedidos.length} pedido{pedidos.length !== 1 ? "s" : ""}</p>
-      </div>
+    <div className="animate-fade-in-up space-y-6">
+      <h2 className="text-2xl font-bold">Historial de Pedidos</h2>
 
-      {pedidos.length === 0 && (
-        <div className="text-center py-16 text-muted-foreground">
-          <History className="w-16 h-16 mx-auto mb-4 opacity-50" />
-          <p className="text-lg font-medium">Sin pedidos aún</p>
-          <p className="text-sm mt-1">Armá tu primer pedido y guardalo</p>
+      {pedidos.length === 0 ? (
+        <div className="text-center py-16">
+          <History className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-30" />
+          <p className="text-muted-foreground">No hay pedidos aún</p>
+          <p className="text-xs text-muted-foreground mt-1">Tus pedidos confirmados van a aparecer acá</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {pedidos.map((p: any) => (
+            <div key={p.id} className="p-4 rounded-xl border bg-card">
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="font-semibold text-sm">Pedido #{p.numero}</p>
+                  <p className="text-xs text-muted-foreground">{p.mayorista?.nombre} · {new Date(p.createdAt).toLocaleDateString("es-AR")}</p>
+                </div>
+                <span className={`px-2 py-1 rounded-lg text-xs font-medium ${
+                  p.estado === "confirmado" ? "bg-emerald-100 text-emerald-700" : "bg-muted text-muted-foreground"
+                }`}>
+                  {p.estado}
+                </span>
+              </div>
+              <p className="font-bold text-emerald-600 mt-2">${formatPrice(p.total)}</p>
+            </div>
+          ))}
         </div>
       )}
-
-      <div className="space-y-3">
-        {pedidos.map((p) => (
-          <div
-            key={p.id}
-            className="rounded-xl border bg-card overflow-hidden"
-          >
-            <button
-              onClick={() => setExpanded(expanded === p.id ? null : p.id)}
-              className="w-full p-4 text-left flex items-center justify-between gap-3 hover:bg-muted/50 transition-colors"
-            >
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs font-medium text-emerald-600">{p.numero}</span>
-                  <span
-                    className={`px-2 py-0.5 rounded text-[10px] font-medium ${
-                      p.estado === "confirmado"
-                        ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
-                        : "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300"
-                    }`}
-                  >
-                    {p.estado}
-                  </span>
-                </div>
-                <p className="font-medium text-sm mt-0.5">{p.mayorista?.nombre}</p>
-                {p.cliente && (
-                  <p className="text-xs text-muted-foreground mt-0.5">Cliente: {p.cliente.nombre}</p>
-                )}
-              </div>
-              <div className="text-right shrink-0">
-                <p className="font-bold text-emerald-600 dark:text-emerald-400">
-                  ${p.total.toLocaleString("es-AR", { minimumFractionDigits: 2 })}
-                </p>
-                <p className="text-[11px] text-muted-foreground">
-                  {new Date(p.createdAt).toLocaleDateString("es-AR")}
-                </p>
-                <ChevronDown
-                  className={`w-4 h-4 mx-auto mt-1 text-muted-foreground transition-transform ${
-                    expanded === p.id ? "rotate-180" : ""
-                  }`}
-                />
-              </div>
-            </button>
-
-            <AnimatePresence>
-              {expanded === p.id && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="overflow-hidden border-t"
-                >
-                  <div className="p-4 space-y-2 max-h-64 overflow-y-auto scrollbar-thin">
-                    {p.items?.map((item: any, idx: number) => (
-                      <div
-                        key={item.id}
-                        className="flex items-center justify-between text-sm py-1.5 border-b last:border-0"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <span className="text-muted-foreground mr-2">{idx + 1}.</span>
-                          <span className="text-xs font-mono text-muted-foreground mr-2">
-                            {item.producto?.codigo}
-                          </span>
-                          <span>{item.producto?.descripcion}</span>
-                          <span className="text-muted-foreground ml-2">
-                            x{item.cantidad}
-                            {item.cantidadRegalo > 0 && ` (+${item.cantidadRegalo})`}
-                          </span>
-                        </div>
-                        <span className="font-medium shrink-0 ml-2">
-                          $
-                          {(
-                            (item.cantidad + item.cantidadRegalo) *
-                            item.precioUnitario *
-                            (1 - (item.descuentoPct || 0) / 100)
-                          ).toLocaleString("es-AR", { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                    ))}
-                    {p.observaciones && (
-                      <p className="text-xs text-muted-foreground mt-2 italic">
-                        📝 {p.observaciones}
-                      </p>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        ))}
-      </div>
     </div>
-  );
-}
-
-// Save icon component (missing from lucide-react import)
-function Save({ className }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
-      <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" />
-      <path d="M7 3v4a1 1 0 0 0 1 1h7" />
-    </svg>
   );
 }
 
 // ==================== MAIN APP ====================
 export default function Home() {
-  const { currentView, user, setUser, setMayoristaActivo, setProductos, mayoristaActivo } = useMayolistaStore();
+  const { currentView, user, setUser, setMayoristaActivo, setProductos, mayoristaActivo, productos } = useMayolistaStore();
+  const [restoring, setRestoring] = useState(true);
 
-  // Recuperar usuario guardado en localStorage
+  // Restore user from localStorage
   useEffect(() => {
     if (!user) {
       try {
         const saved = localStorage.getItem("mayolista_user");
-        if (saved) {
-          setUser(JSON.parse(saved));
-        }
+        if (saved) setUser(JSON.parse(saved));
       } catch { /* ignore */ }
     }
   }, [user, setUser]);
 
-  // Auto-restore active mayorista and load products on startup
+  // Auto-restore mayorista and products on startup
   useEffect(() => {
-    if (user && !mayoristaActivo) {
-      const savedMayoristaId = localStorage.getItem("mayolista_mayorista_id");
-      if (savedMayoristaId) {
-        (async () => {
-          try {
-            // Fetch all mayoristas for the user
-            const mayoristasRes = await fetch("/api/mayoristas", { headers: authHeaders() });
-            if (mayoristasRes.ok) {
-              const mayoristas = await mayoristasRes.json();
-              const active = mayoristas.find((m: any) => m.id === savedMayoristaId);
-              if (active) {
-                setMayoristaActivo(active);
-                // Load products for this mayorista
-                const prodRes = await fetch(`/api/productos?mayoristaId=${savedMayoristaId}`, { headers: authHeaders() });
-                if (prodRes.ok) {
-                  const prods = await prodRes.json();
-                  setProductos(prods);
-                }
-              } else {
-                // Saved mayorista no longer exists, clean up
-                localStorage.removeItem("mayolista_mayorista_id");
-              }
-            }
-          } catch { /* ignore */ }
-        })();
-      }
+    if (!user) return;
+    
+    const savedMayoristaId = localStorage.getItem("mayolista_mayorista_id");
+    if (!savedMayoristaId) {
+      setRestoring(false);
+      return;
     }
-  }, [user, mayoristaActivo, setMayoristaActivo, setProductos]);
 
-  if (!user) {
-    return <LoginView />;
+    (async () => {
+      try {
+        const mayoristasRes = await fetch("/api/mayoristas", { headers: authHeaders() });
+        if (mayoristasRes.ok) {
+          const mayoristas = await mayoristasRes.json();
+          const active = mayoristas.find((m: any) => m.id === savedMayoristaId);
+          if (active) {
+            setMayoristaActivo(active);
+            // Load products
+            const prodRes = await fetch(`/api/productos?mayoristaId=${savedMayoristaId}`, { headers: authHeaders() });
+            if (prodRes.ok) {
+              const prods = await prodRes.json();
+              setProductos(prods);
+            }
+          } else {
+            localStorage.removeItem("mayolista_mayorista_id");
+          }
+        }
+      } catch { /* ignore */ }
+      finally { setRestoring(false); }
+    })();
+  }, [user, setMayoristaActivo, setProductos]);
+
+  if (!user) return <LoginView />;
+
+  if (restoring) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+      </div>
+    );
   }
 
   return (

@@ -5,7 +5,7 @@ function getUserId(req: NextRequest): string | null {
   return req.headers.get("x-user-id");
 }
 
-// GET - Search products
+// GET - Search products or load all for a mayorista
 export async function GET(req: NextRequest) {
   try {
     const userId = getUserId(req);
@@ -28,32 +28,50 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "No encontrado" }, { status: 404 });
     }
 
-    const where: any = { mayoristaId };
-
-    if (query.length > 0) {
-      const normalized = query.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-      const words = normalized.split(/\s+/).filter(w => w.length >= 2);
-      const meaningfulWords = words.length > 1 ? words.filter(w => w.length >= 3) : words;
-
-      if (meaningfulWords.length > 0) {
-        where.OR = [];
-        for (const word of meaningfulWords) {
-          where.OR.push(
-            { codigo: { contains: word, mode: "insensitive" } },
-            { descripcion: { contains: word, mode: "insensitive" } }
-          );
-        }
-      } else if (words.length > 0) {
-        where.OR = [
-          { codigo: { contains: words[0], mode: "insensitive" } },
-          { descripcion: { contains: words[0], mode: "insensitive" } },
-        ];
-      }
+    if (query.length === 0) {
+      // Load all products (no search) - up to 10000
+      const productos = await db.producto.findMany({
+        where: { mayoristaId },
+        orderBy: { descripcion: "asc" },
+        take: 10000,
+      });
+      return NextResponse.json(productos);
     }
 
-    // When searching, let DB filter and return up to 500. When loading all, up to 5000.
+    // Search with query - normalize and split into words
+    const normalized = query
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+    const words = normalized
+      .split(/\s+/)
+      .filter((w) => w.length >= 2);
+
+    if (words.length === 0) {
+      const productos = await db.producto.findMany({
+        where: { mayoristaId },
+        orderBy: { descripcion: "asc" },
+        take: 500,
+      });
+      return NextResponse.json(productos);
+    }
+
+    // Build OR conditions: each word must match in codigo OR descripcion
+    const conditions = [];
+    for (const word of words) {
+      conditions.push({
+        OR: [
+          { codigo: { contains: word } },
+          { descripcion: { contains: word } },
+        ],
+      });
+    }
+
     const productos = await db.producto.findMany({
-      where: query.length > 0 ? where : { mayoristaId },
+      where: {
+        mayoristaId,
+        AND: conditions,
+      },
       orderBy: { descripcion: "asc" },
       take: 500,
     });
@@ -101,7 +119,12 @@ export async function POST(req: NextRequest) {
     }));
 
     if (productData.length > 0) {
-      await db.producto.createMany({ data: productData });
+      // Insert in batches of 500 to avoid SQLite limits
+      const BATCH = 500;
+      for (let i = 0; i < productData.length; i += BATCH) {
+        const batch = productData.slice(i, i + BATCH);
+        await db.producto.createMany({ data: batch });
+      }
     }
 
     return NextResponse.json({

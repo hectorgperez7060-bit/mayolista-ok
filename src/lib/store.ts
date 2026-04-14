@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Producto, PedidoItemConProducto, Mayorista, Cliente, Pedido } from "@/lib/types";
+import type { Producto, PedidoItemConProducto, Mayorista, Cliente } from "@/lib/types";
 
 interface MayolistaState {
   // Auth
@@ -49,7 +49,8 @@ export const useMayolistaStore = create<MayolistaState>((set, get) => ({
         localStorage.removeItem("mayolista_mayorista_id");
       }
     }
-    set({ mayoristaActivo: m, productos: [], pedidoItems: [], clienteActivo: null, descuentoGlobal: 0 });
+    // Don't clear productos and pedidoItems when restoring mayorista!
+    set({ mayoristaActivo: m });
   },
 
   productos: [],
