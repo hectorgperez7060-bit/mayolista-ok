@@ -41,7 +41,16 @@ export const useMayolistaStore = create<MayolistaState>((set, get) => ({
   setCurrentView: (view) => set({ currentView: view }),
 
   mayoristaActivo: null,
-  setMayoristaActivo: (m) => set({ mayoristaActivo: m, productos: [], pedidoItems: [], clienteActivo: null, descuentoGlobal: 0 }),
+  setMayoristaActivo: (m) => {
+    if (typeof window !== "undefined") {
+      if (m) {
+        localStorage.setItem("mayolista_mayorista_id", m.id);
+      } else {
+        localStorage.removeItem("mayolista_mayorista_id");
+      }
+    }
+    set({ mayoristaActivo: m, productos: [], pedidoItems: [], clienteActivo: null, descuentoGlobal: 0 });
+  },
 
   productos: [],
   setProductos: (p) => set({ productos: p }),

@@ -116,3 +116,37 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
+// DELETE - Delete all products for a mayorista
+export async function DELETE(req: NextRequest) {
+  try {
+    const userId = getUserId(req);
+    if (!userId) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+    }
+
+    const { searchParams } = new URL(req.url);
+    const mayoristaId = searchParams.get("mayoristaId");
+
+    if (!mayoristaId) {
+      return NextResponse.json({ error: "mayoristaId requerido" }, { status: 400 });
+    }
+
+    const mayorista = await db.mayorista.findFirst({
+      where: { id: mayoristaId, userId },
+    });
+    if (!mayorista) {
+      return NextResponse.json({ error: "No encontrado" }, { status: 404 });
+    }
+
+    const result = await db.producto.deleteMany({ where: { mayoristaId } });
+
+    return NextResponse.json({
+      ok: true,
+      deleted: result.count,
+    });
+  } catch (error) {
+    console.error("DELETE /api/productos error:", error);
+    return NextResponse.json({ error: "Error interno" }, { status: 500 });
+  }
+}

@@ -131,10 +131,8 @@ function LoginView() {
           className="bg-card rounded-2xl shadow-lg border p-6 space-y-4"
         >
           <div className="flex items-center gap-3 mb-2">
-            <div className="w-10 h-10 rounded-full bg-gray-900 dark:bg-white flex items-center justify-center">
-              <svg viewBox="0 0 24 24" className="w-5 h-5 fill-white dark:fill-gray-900">
-                <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
-              </svg>
+            <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
+              <Store className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
             </div>
             <div>
               <h2 className="font-semibold text-lg">Ingresá con tu cuenta</h2>
@@ -374,7 +372,37 @@ function DashboardView() {
         </div>
       </div>
 
-      {/* Quick Stats */}
+      {/* BIG onboarding card when no mayorista */}
+      {!mayoristaActivo && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="relative overflow-hidden rounded-2xl border-2 border-dashed border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20 p-8 text-center"
+        >
+          <div className="w-20 h-20 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center mx-auto mb-4">
+            <Truck className="w-10 h-10 text-emerald-600 dark:text-emerald-400" />
+          </div>
+          <h3 className="text-2xl font-bold mb-2">¿Primera vez acá?</h3>
+          <p className="text-muted-foreground text-base max-w-md mx-auto mb-6">
+            Para empezar a armar pedidos, necesitás configurar tu primer mayorista. 
+            Elegí un nombre, el rubro, y subí tu lista de precios.
+          </p>
+          <button
+            onClick={() => setCurrentView("mayorista")}
+            className="inline-flex items-center gap-3 px-8 py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold text-lg shadow-xl shadow-emerald-200 dark:shadow-emerald-900/40 hover:from-emerald-600 hover:to-emerald-700 hover:scale-[1.02] active:scale-[0.98] transition-all"
+          >
+            <Store className="w-6 h-6" />
+            Configurar mi primer mayorista
+          </button>
+          <p className="text-xs text-muted-foreground mt-4">
+            Takes less than 2 minutes · Subí tu lista de precios en Excel o CSV
+          </p>
+        </motion.div>
+      )}
+
+      {/* Quick Stats - only show when mayorista is active */}
+      {mayoristaActivo && (
       <div className="grid grid-cols-2 gap-4">
         <button
           onClick={() => setCurrentView("buscar")}
@@ -393,6 +421,7 @@ function DashboardView() {
           <p className="text-sm text-muted-foreground">En tu pedido</p>
         </button>
       </div>
+      )}
 
       {/* Quick Actions */}
       <div className="space-y-3">
@@ -452,29 +481,13 @@ function DashboardView() {
           </button>
         </div>
       </div>
-
-      {/* Recent wholesalers - loaded on demand */}
-      {!mayoristaActivo && (
-        <div className="space-y-3 p-4 rounded-xl border bg-card">
-          <p className="text-sm text-muted-foreground text-center">
-            🔔 Configurá tu primer mayorista para empezar a armar pedidos
-          </p>
-          <button
-            onClick={() => setCurrentView("mayorista")}
-            className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold hover:from-emerald-600 hover:to-emerald-700 transition-all flex items-center justify-center gap-2"
-          >
-            <Store className="w-5 h-5" />
-            Configurar mayorista
-          </button>
-        </div>
-      )}
     </div>
   );
 }
 
 // ==================== MAYORISTA VIEW ====================
 function MayoristaView() {
-  const { setMayoristaActivo, setCurrentView } = useMayolistaStore();
+  const { setMayoristaActivo, setCurrentView, setProductos, mayoristaActivo } = useMayolistaStore();
   const [nombre, setNombre] = useState("");
   const [rubro, setRubro] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -855,6 +868,48 @@ function MayoristaView() {
           </button>
         </div>
       )}
+
+      {/* Borrar todos los productos */}
+      {mayoristaActivo && (
+        <div className="p-4 rounded-2xl border border-destructive/30 bg-destructive/5">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0">
+              <Trash2 className="w-5 h-5 text-destructive" />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-semibold text-sm">Borrar todos los productos</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Eliminá todos los productos de <strong>{mayoristaActivo.nombre}</strong>. Esta acción no se puede deshacer.
+              </p>
+              <button
+                onClick={async () => {
+                  if (!mayoristaActivo?.id) return;
+                  if (!confirm(`¿Estás seguro de borrar todos los productos de ${mayoristaActivo.nombre}?`)) return;
+                  try {
+                    const res = await fetch(`/api/productos?mayoristaId=${mayoristaActivo.id}`, {
+                      method: "DELETE",
+                      headers: authHeaders(),
+                    });
+                    if (res.ok) {
+                      const data = await res.json();
+                      setProductos([]);
+                      toast.success(`${data.deleted} productos eliminados`);
+                    } else {
+                      toast.error("Error al borrar productos");
+                    }
+                  } catch {
+                    toast.error("Error de conexión");
+                  }
+                }}
+                className="mt-3 px-4 py-2 rounded-lg bg-destructive text-destructive-foreground text-sm font-medium hover:bg-destructive/90 transition-colors flex items-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" />
+                Borrar todos los productos
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -873,6 +928,7 @@ function BuscarView() {
   const [listening, setListening] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
+  const detectedCantidad = useRef<number>(1);
 
   // Load products when mayorista changes
   useEffect(() => {
@@ -924,16 +980,30 @@ function BuscarView() {
     recognition.continuous = false;
     recognition.interimResults = true;
 
+    let finalTranscript = "";
     recognition.onresult = (event: any) => {
-      let transcript = "";
+      let interimTranscript = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        transcript += event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript;
+        } else {
+          interimTranscript += event.results[i][0].transcript;
+        }
       }
-      setQuery(transcript);
+      setQuery(finalTranscript + interimTranscript);
     };
 
     recognition.onend = () => {
       setListening(false);
+      // Auto-trigger search after voice input ends
+      if (finalTranscript.trim()) {
+        // Small delay to let state update
+        setTimeout(() => {
+          setQuery(finalTranscript);
+          // Trigger search after query is set
+          setTimeout(() => handleSearch(), 100);
+        }, 50);
+      }
     };
 
     recognition.onerror = () => {
@@ -947,8 +1017,35 @@ function BuscarView() {
 
   const [aiSearching, setAiSearching] = useState(false);
 
+  // Parse quantity from query: e.g. "azúcar chango 400 unidades" -> quantity 400, clean query
+  const parseQuantity = (q: string): { cleanedQuery: string; cantidad: number } => {
+    // Pattern: number followed by quantity word (unidades, unidad, unit, cajas, caja, bolsas, bolsa, packs, pack, kilos, kilo, kg, botellas, botella, latas, lata)
+    const qtyPattern = /\b(\d+)\s*(?:unidades?|unit|cajas?|bolsas?|packs?|kilos?|kgs?|kg|botellas?|latas?|docenas?)\b/i;
+    const match = q.match(qtyPattern);
+    if (match) {
+      const cantidad = parseInt(match[1], 10);
+      const cleanedQuery = q.replace(qtyPattern, "").trim();
+      return { cleanedQuery, cantidad: cantidad > 0 ? cantidad : 1 };
+    }
+    // Also try: word followed by number (e.g. "400 unidades")
+    const qtyPattern2 = /\b(\d+)\s*\w*$/;
+    const match2 = q.match(qtyPattern2);
+    if (match2 && parseInt(match2[1], 10) > 1) {
+      // Only match if the number is at the end and looks like a quantity (2-4 digits)
+      const num = parseInt(match2[1], 10);
+      if (num >= 2 && num <= 9999) {
+        const cleanedQuery = q.replace(qtyPattern2, "").trim();
+        return { cleanedQuery, cantidad: num };
+      }
+    }
+    return { cleanedQuery: q, cantidad: 1 };
+  };
+
   const handleSearch = async () => {
     if (!query.trim() || !mayoristaActivo?.id) return;
+    // Parse quantity from query
+    const parsed = parseQuantity(query);
+    detectedCantidad.current = parsed.cantidad;
     setLoading(true);
     try {
       const res = await fetch(
@@ -970,8 +1067,10 @@ function BuscarView() {
   };
 
   // Simple search: filter loaded products by text match (no fuzzy, no complex logic)
+  // Use cleaned query (without quantity words) for better matching
+  const parsedQuery = parseQuantity(query.trim());
   const normalizeText = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-  const normalizedQuery = normalizeText(query.trim());
+  const normalizedQuery = normalizeText(parsedQuery.cleanedQuery || query.trim());
   const queryWords = normalizedQuery.split(/\s+/).filter(w => w.length >= 2);
   const meaningfulWords = queryWords.length > 1 ? queryWords.filter(w => w.length >= 3) : queryWords;
 
@@ -1095,7 +1194,7 @@ function BuscarView() {
               transition={{ delay: idx * 0.03 }}
               onClick={() => {
                 setSelectedProduct(product);
-                setCantidad(1);
+                setCantidad(detectedCantidad.current);
                 setCantidadRegalo(0);
                 setDescuentoPct(0);
               }}
@@ -2143,7 +2242,7 @@ function Save({ className }: { className?: string }) {
 
 // ==================== MAIN APP ====================
 export default function Home() {
-  const { currentView, user, setUser } = useMayolistaStore();
+  const { currentView, user, setUser, setMayoristaActivo, setProductos, mayoristaActivo } = useMayolistaStore();
 
   // Recuperar usuario guardado en localStorage
   useEffect(() => {
@@ -2156,6 +2255,37 @@ export default function Home() {
       } catch { /* ignore */ }
     }
   }, [user, setUser]);
+
+  // Auto-restore active mayorista and load products on startup
+  useEffect(() => {
+    if (user && !mayoristaActivo) {
+      const savedMayoristaId = localStorage.getItem("mayolista_mayorista_id");
+      if (savedMayoristaId) {
+        (async () => {
+          try {
+            // Fetch all mayoristas for the user
+            const mayoristasRes = await fetch("/api/mayoristas", { headers: authHeaders() });
+            if (mayoristasRes.ok) {
+              const mayoristas = await mayoristasRes.json();
+              const active = mayoristas.find((m: any) => m.id === savedMayoristaId);
+              if (active) {
+                setMayoristaActivo(active);
+                // Load products for this mayorista
+                const prodRes = await fetch(`/api/productos?mayoristaId=${savedMayoristaId}`, { headers: authHeaders() });
+                if (prodRes.ok) {
+                  const prods = await prodRes.json();
+                  setProductos(prods);
+                }
+              } else {
+                // Saved mayorista no longer exists, clean up
+                localStorage.removeItem("mayolista_mayorista_id");
+              }
+            }
+          } catch { /* ignore */ }
+        })();
+      }
+    }
+  }, [user, mayoristaActivo, setMayoristaActivo, setProductos]);
 
   if (!user) {
     return <LoginView />;
