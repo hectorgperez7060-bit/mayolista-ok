@@ -51,11 +51,11 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Load all products (up to 5000) when no query, limit 100 when searching
+    // When searching, let DB filter and return up to 500. When loading all, up to 5000.
     const productos = await db.producto.findMany({
       where: query.length > 0 ? where : { mayoristaId },
       orderBy: { descripcion: "asc" },
-      take: query.length > 0 ? 100 : 5000,
+      take: 500,
     });
 
     return NextResponse.json(productos);
