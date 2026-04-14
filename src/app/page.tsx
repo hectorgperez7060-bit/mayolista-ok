@@ -858,7 +858,7 @@ function BuscarView() {
       { name: "codigo", weight: 0.3 },
       { name: "descripcion", weight: 0.7 },
     ],
-    threshold: 0.5,
+    threshold: 0.4,
     includeScore: true,
     minMatchCharLength: 2,
     ignoreLocation: true,
@@ -868,8 +868,13 @@ function BuscarView() {
   // Split query into words for better matching
   const fuzzyResults = query.trim().length >= 2 ? fuse.search(query) : [];
 
-  const displayResults = fuzzyResults.length > 0
-    ? fuzzyResults.map((r) => ({ ...r.item, score: r.score }))
+  // Filter out bad matches and limit results
+  const goodFuzzyResults = fuzzyResults
+    .filter((r) => (r.score || 0) < 0.6)
+    .slice(0, 20);
+
+  const displayResults = goodFuzzyResults.length > 0
+    ? goodFuzzyResults.map((r) => ({ ...r.item, score: r.score }))
     : results;
 
   const handleAddToPedido = () => {
@@ -990,9 +995,6 @@ function BuscarView() {
                     <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
                       {product.codigo}
                     </span>
-                    {product.score !== undefined && product.score > 0.2 && (
-                      <span className="text-[10px] text-muted-foreground">similar</span>
-                    )}
                   </div>
                   <p className="font-medium text-sm">{product.descripcion}</p>
                 </div>

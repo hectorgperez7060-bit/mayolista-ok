@@ -143,8 +143,8 @@ export async function GET(req: NextRequest) {
     const where: any = { mayoristaId };
 
     if (query) {
-      // Split query into words and search for each
-      const words = query.toLowerCase().split(/\s+/).filter((w) => w.length > 1);
+      // Split query into words and search - if ANY word matches, return it (OR logic)
+      const words = query.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
 
       if (words.length > 0) {
         where.OR = [];
@@ -154,6 +154,12 @@ export async function GET(req: NextRequest) {
             { descripcion: { contains: word, mode: "insensitive" } }
           );
         }
+      } else if (query.length >= 2) {
+        // Single short word like "80"
+        where.OR = [
+          { codigo: { contains: query.toLowerCase(), mode: "insensitive" } },
+          { descripcion: { contains: query.toLowerCase(), mode: "insensitive" } },
+        ];
       }
     }
 
