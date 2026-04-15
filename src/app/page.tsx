@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Loader2,
@@ -29,6 +29,8 @@ import {
   MicOff,
   ChevronRight,
   Sparkles,
+  Pencil,
+  Layers,
 } from "lucide-react";
 import { useMayolistaStore } from "@/lib/store";
 import { toast } from "sonner";
@@ -97,6 +99,7 @@ function LoginView() {
       if (res.ok) {
         const data = await res.json();
         useMayolistaStore.getState().setUser(data.user);
+        useMayolistaStore.getState().setCurrentView("dashboard");
         localStorage.setItem("mayolista_user", JSON.stringify(data.user));
         toast.success(`¡Bienvenido, ${nombre.trim()}!`);
       } else {
@@ -210,6 +213,7 @@ function AppHeader() {
     { id: "dashboard", label: "Inicio", icon: Store },
     { id: "buscar", label: "Buscar", icon: Search },
     { id: "pedido", label: "Pedido", icon: ShoppingCart },
+    { id: "maestro", label: "Maestro", icon: Layers },
     { id: "mayorista", label: "Mayorista", icon: Truck },
     { id: "clientes", label: "Clientes", icon: Users },
     { id: "historial", label: "Historial", icon: History },
@@ -315,13 +319,14 @@ function BottomNav() {
   const items = [
     { id: "buscar", label: "Buscar", icon: Search },
     { id: "pedido", label: "Pedido", icon: ShoppingCart },
+    { id: "maestro", label: "Maestro", icon: Layers },
     { id: "clientes", label: "Clientes", icon: Users },
     { id: "historial", label: "Historial", icon: History },
   ];
 
   return (
     <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 glass border-t bg-card/95 backdrop-blur-lg">
-      <div className="grid grid-cols-4 h-16">
+      <div className="grid grid-cols-5 h-16">
         {items.map((item) => (
           <button
             key={item.id}
@@ -914,20 +919,64 @@ function BuscarView() {
     load();
   }, [mayoristaActivo?.id, productsLoaded, setProductos]);
 
-  // Client-side search - filter products locally (fast, no API call)
+  // Client-side search
   const parsed = parseQuantity(query.trim());
   detectedCantidad.current = parsed.cantidad;
 
-  const normalizedQuery = normalizeText(parsed.cleanQuery || query.trim());
-  const queryWords = normalizedQuery.split(/\s+/).filter((w) => w.length >= 2);
+  // Build Fuse instance once when products load
+  const fuse = useMemo(() => {
+    if (productos.length === 0) return null;
+    return new Fuse(productos, {
+      keys: [
+        { name: "descripcion", weight: 0.75 },
+        { name: "codigo", weight: 0.25 },
+      ],
+      threshold: 0.38,
+      ignoreLocation: true,
+      minMatchCharLength: 2,
+      shouldSort: true,
+    });
+  }, [productos]);
 
-  const results = queryWords.length > 0 && productos.length > 0
-    ? productos.filter((p) => {
-        const desc = normalizeText(p.descripcion || "");
-        const cod = normalizeText(p.codigo || "");
-        return queryWords.every((w) => desc.includes(w) || cod.includes(w));
-      }).slice(0, 50)
-    : [];
+  const results = useMemo(() => {
+    const cleanQ = parsed.cleanQuery || query.trim();
+    const normalizedQ = normalizeText(cleanQ);
+    if (normalizedQ.length < 2 || productos.length === 0) return [];
+
+    const queryWords = normalizedQ.split(/\s+/).filter((w) => w.length >= 2);
+    if (queryWords.length === 0) return [];
+
+    // Nivel 1: todas las palabras coinciden exactamente
+    const tier1 = productos.filter((p) => {
+      const desc = normalizeText(p.descripcion || "");
+      const cod = normalizeText(p.codigo || "");
+      return queryWords.every((w) => desc.includes(w) || cod.includes(w));
+    });
+
+    if (tier1.length >= 3) return tier1.slice(0, 80);
+
+    // Nivel 2: alguna palabra coincide
+    const tier2 = productos.filter((p) => {
+      const desc = normalizeText(p.descripcion || "");
+      const cod = normalizeText(p.codigo || "");
+      return queryWords.some((w) => desc.includes(w) || cod.includes(w));
+    });
+
+    // Nivel 3: fuzzy con Fuse.js
+    const fuzzy = fuse ? fuse.search(normalizedQ, { limit: 40 }).map((r) => r.item) : [];
+
+    // Merge sin duplicados: tier1 > tier2 > fuzzy
+    const seen = new Set<string>();
+    const merged: typeof productos = [];
+    for (const p of [...tier1, ...tier2, ...fuzzy]) {
+      if (!seen.has(p.id)) {
+        seen.add(p.id);
+        merged.push(p);
+      }
+      if (merged.length >= 80) break;
+    }
+    return merged;
+  }, [query, productos, fuse, parsed.cleanQuery]);
 
   // Show all products when no query
   const displayResults = query.trim().length < 2
@@ -1508,9 +1557,266 @@ function HistorialView() {
   );
 }
 
+// ==================== MAESTRO VIEW ====================
+function MaestroView() {
+  const { mayoristaActivo, productos, setProductos, setCurrentView } = useMayolistaStore();
+  const [search, setSearch] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValues, setEditValues] = useState({ codigo: "", descripcion: "", precio: "" });
+  const [saving, setSaving] = useState(false);
+  const [addForm, setAddForm] = useState({ codigo: "", descripcion: "", precio: "" });
+  const [adding, setAdding] = useState(false);
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return productos;
+    const q = normalizeText(search);
+    return productos.filter(
+      (p) => normalizeText(p.descripcion).includes(q) || normalizeText(p.codigo).includes(q)
+    );
+  }, [search, productos]);
+
+  const handleEdit = (p: { id: string; codigo: string; descripcion: string; precio: number }) => {
+    setEditingId(p.id);
+    setEditValues({ codigo: p.codigo, descripcion: p.descripcion, precio: String(p.precio) });
+  };
+
+  const handleSave = async (id: string) => {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/productos?id=${id}`, {
+        method: "PATCH",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          codigo: editValues.codigo,
+          descripcion: editValues.descripcion,
+          precio: parseFloat(editValues.precio) || 0,
+        }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setProductos(productos.map((p) => (p.id === id ? updated : p)));
+        setEditingId(null);
+        toast.success("Producto actualizado");
+      } else {
+        toast.error("Error al guardar");
+      }
+    } catch {
+      toast.error("Error de conexión");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string, nombre: string) => {
+    if (!confirm(`¿Eliminar "${nombre}"?`)) return;
+    try {
+      const res = await fetch(`/api/productos?id=${id}`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+      if (res.ok) {
+        setProductos(productos.filter((p) => p.id !== id));
+        toast.success("Producto eliminado");
+      } else {
+        toast.error("Error al eliminar");
+      }
+    } catch {
+      toast.error("Error de conexión");
+    }
+  };
+
+  const handleAdd = async () => {
+    if (!addForm.descripcion.trim()) { toast.error("Ingresá la descripción"); return; }
+    if (!mayoristaActivo) return;
+    setAdding(true);
+    try {
+      const res = await fetch("/api/productos", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          mayoristaId: mayoristaActivo.id,
+          productos: [{ codigo: addForm.codigo, descripcion: addForm.descripcion, precio: parseFloat(addForm.precio) || 0 }],
+          replace: false,
+        }),
+      });
+      if (res.ok) {
+        const prodRes = await fetch(`/api/productos?mayoristaId=${mayoristaActivo.id}`, { headers: authHeaders() });
+        if (prodRes.ok) setProductos(await prodRes.json());
+        setAddForm({ codigo: "", descripcion: "", precio: "" });
+        toast.success("Producto agregado");
+      } else {
+        toast.error("Error al agregar");
+      }
+    } catch {
+      toast.error("Error de conexión");
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  if (!mayoristaActivo) {
+    return (
+      <div className="animate-fade-in-up text-center py-20">
+        <Layers className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+        <h3 className="text-xl font-semibold mb-2">Sin mayorista activo</h3>
+        <p className="text-muted-foreground mb-6">Primero configurá un mayorista</p>
+        <button onClick={() => setCurrentView("mayorista")} className="px-6 py-3 rounded-xl bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors">
+          Ir a mayorista
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="animate-fade-in-up space-y-4">
+      <div>
+        <h2 className="text-2xl font-bold">Maestro de Productos</h2>
+        <p className="text-muted-foreground mt-1">{mayoristaActivo.nombre} · {productos.length} productos</p>
+      </div>
+
+      {/* Agregar producto */}
+      <div className="p-4 rounded-2xl border bg-card space-y-3">
+        <h3 className="font-semibold text-sm">Agregar producto</h3>
+        <div className="grid grid-cols-2 gap-2">
+          <input
+            type="text"
+            placeholder="Código"
+            value={addForm.codigo}
+            onChange={(e) => setAddForm((f) => ({ ...f, codigo: e.target.value }))}
+            className="px-3 py-2.5 rounded-xl border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+          <input
+            type="number"
+            placeholder="Precio"
+            value={addForm.precio}
+            onChange={(e) => setAddForm((f) => ({ ...f, precio: e.target.value }))}
+            className="px-3 py-2.5 rounded-xl border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+        </div>
+        <input
+          type="text"
+          placeholder="Descripción *"
+          value={addForm.descripcion}
+          onChange={(e) => setAddForm((f) => ({ ...f, descripcion: e.target.value }))}
+          className="w-full px-3 py-2.5 rounded-xl border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        />
+        <button
+          onClick={handleAdd}
+          disabled={adding || !addForm.descripcion.trim()}
+          className="w-full py-2.5 rounded-xl bg-emerald-500 text-white font-semibold text-sm hover:bg-emerald-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Plus className="w-4 h-4" /> Agregar</>}
+        </button>
+      </div>
+
+      {/* Buscador */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <input
+          type="text"
+          placeholder={`Buscar en ${productos.length} productos...`}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full pl-10 pr-4 py-3 rounded-xl border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        />
+      </div>
+
+      {/* Lista */}
+      <div className="space-y-2 max-h-[calc(100vh-420px)] overflow-y-auto scrollbar-thin">
+        {filtered.length === 0 && (
+          <div className="text-center py-12 text-muted-foreground">
+            <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
+            <p className="text-sm">No hay productos</p>
+          </div>
+        )}
+
+        {filtered.map((p) =>
+          editingId === p.id ? (
+            <div key={p.id} className="p-3 rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20 space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  value={editValues.codigo}
+                  onChange={(e) => setEditValues((v) => ({ ...v, codigo: e.target.value }))}
+                  placeholder="Código"
+                  className="px-3 py-2 rounded-lg border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+                <input
+                  type="number"
+                  value={editValues.precio}
+                  onChange={(e) => setEditValues((v) => ({ ...v, precio: e.target.value }))}
+                  placeholder="Precio"
+                  className="px-3 py-2 rounded-lg border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <input
+                type="text"
+                value={editValues.descripcion}
+                onChange={(e) => setEditValues((v) => ({ ...v, descripcion: e.target.value }))}
+                placeholder="Descripción"
+                className="w-full px-3 py-2 rounded-lg border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleSave(p.id)}
+                  disabled={saving}
+                  className="flex-1 py-2 rounded-lg bg-emerald-500 text-white text-xs font-semibold hover:bg-emerald-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-1"
+                >
+                  {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Check className="w-3 h-3" /> Guardar</>}
+                </button>
+                <button
+                  onClick={() => setEditingId(null)}
+                  className="px-4 py-2 rounded-lg border text-xs font-medium hover:bg-muted transition-colors"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div key={p.id} className="flex items-center gap-3 p-3 rounded-xl border bg-card hover:border-emerald-200 dark:hover:border-emerald-800 transition-all">
+              <div className="flex-1 min-w-0">
+                {p.codigo && (
+                  <span className="inline-block text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 mb-0.5">
+                    {p.codigo}
+                  </span>
+                )}
+                <p className="text-sm font-medium leading-snug truncate">{p.descripcion}</p>
+                <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">${formatPrice(p.precio)}</p>
+              </div>
+              <div className="flex gap-1 shrink-0">
+                <button
+                  onClick={() => handleEdit(p)}
+                  className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                  title="Editar"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => handleDelete(p.id, p.descripcion)}
+                  className="p-2 rounded-lg hover:bg-destructive/10 hover:text-destructive transition-colors text-muted-foreground"
+                  title="Eliminar"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )
+        )}
+
+        {filtered.length > 0 && (
+          <p className="text-center text-xs text-muted-foreground py-2">
+            {filtered.length} producto{filtered.length !== 1 ? "s" : ""}
+            {search.trim() && ` encontrado${filtered.length !== 1 ? "s" : ""}`}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ==================== MAIN APP ====================
 export default function Home() {
-  const { currentView, user, setUser, setMayoristaActivo, setProductos, mayoristaActivo, productos } = useMayolistaStore();
+  const { currentView, user, setUser, setCurrentView, setMayoristaActivo, setProductos, mayoristaActivo, productos } = useMayolistaStore();
   const [restoring, setRestoring] = useState(true);
 
   // Restore user from localStorage
@@ -1529,6 +1835,7 @@ export default function Home() {
     
     const savedMayoristaId = localStorage.getItem("mayolista_mayorista_id");
     if (!savedMayoristaId) {
+      setCurrentView("dashboard");
       setRestoring(false);
       return;
     }
@@ -1547,14 +1854,16 @@ export default function Home() {
               const prods = await prodRes.json();
               setProductos(prods);
             }
+            setCurrentView("buscar");
           } else {
             localStorage.removeItem("mayolista_mayorista_id");
+            setCurrentView("dashboard");
           }
         }
       } catch { /* ignore */ }
       finally { setRestoring(false); }
     })();
-  }, [user, setMayoristaActivo, setProductos]);
+  }, [user, setCurrentView, setMayoristaActivo, setProductos]);
 
   if (!user) return <LoginView />;
 
@@ -1576,6 +1885,7 @@ export default function Home() {
           {currentView === "mayorista" && <MayoristaView key="mayorista" />}
           {currentView === "buscar" && <BuscarView key="buscar" />}
           {currentView === "pedido" && <PedidoView key="pedido" />}
+          {currentView === "maestro" && <MaestroView key="maestro" />}
           {currentView === "clientes" && <ClientesView key="clientes" />}
           {currentView === "historial" && <HistorialView key="historial" />}
         </AnimatePresence>

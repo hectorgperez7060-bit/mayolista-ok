@@ -140,7 +140,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// DELETE - Delete all products for a mayorista
+// DELETE - Delete a single product (?id=xxx) or all for a mayorista (?mayoristaId=xxx)
 export async function DELETE(req: NextRequest) {
   try {
     const userId = getUserId(req);
@@ -149,10 +149,24 @@ export async function DELETE(req: NextRequest) {
     }
 
     const { searchParams } = new URL(req.url);
+    const productoId = searchParams.get("id");
     const mayoristaId = searchParams.get("mayoristaId");
 
+    if (productoId) {
+      // Delete single product - verify ownership through mayorista
+      const producto = await db.producto.findFirst({
+        where: { id: productoId },
+        include: { mayorista: { select: { userId: true } } },
+      });
+      if (!producto || producto.mayorista.userId !== userId) {
+        return NextResponse.json({ error: "No encontrado" }, { status: 404 });
+      }
+      await db.producto.delete({ where: { id: productoId } });
+      return NextResponse.json({ ok: true });
+    }
+
     if (!mayoristaId) {
-      return NextResponse.json({ error: "mayoristaId requerido" }, { status: 400 });
+      return NextResponse.json({ error: "id o mayoristaId requerido" }, { status: 400 });
     }
 
     const mayorista = await db.mayorista.findFirst({
@@ -164,12 +178,50 @@ export async function DELETE(req: NextRequest) {
 
     const result = await db.producto.deleteMany({ where: { mayoristaId } });
 
-    return NextResponse.json({
-      ok: true,
-      deleted: result.count,
-    });
+    return NextResponse.json({ ok: true, deleted: result.count });
   } catch (error) {
     console.error("DELETE /api/productos error:", error);
+    return NextResponse.json({ error: "Error interno" }, { status: 500 });
+  }
+}
+
+// PATCH - Update a single product (?id=xxx)
+export async function PATCH(req: NextRequest) {
+  try {
+    const userId = getUserId(req);
+    if (!userId) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+    }
+
+    const { searchParams } = new URL(req.url);
+    const productoId = searchParams.get("id");
+    if (!productoId) {
+      return NextResponse.json({ error: "id requerido" }, { status: 400 });
+    }
+
+    const producto = await db.producto.findFirst({
+      where: { id: productoId },
+      include: { mayorista: { select: { userId: true } } },
+    });
+    if (!producto || producto.mayorista.userId !== userId) {
+      return NextResponse.json({ error: "No encontrado" }, { status: 404 });
+    }
+
+    const body = await req.json();
+    const { codigo, descripcion, precio } = body;
+
+    const updated = await db.producto.update({
+      where: { id: productoId },
+      data: {
+        ...(codigo !== undefined && { codigo: String(codigo) }),
+        ...(descripcion !== undefined && { descripcion: String(descripcion) }),
+        ...(precio !== undefined && { precio: Number(precio) || 0 }),
+      },
+    });
+
+    return NextResponse.json(updated);
+  } catch (error) {
+    console.error("PATCH /api/productos error:", error);
     return NextResponse.json({ error: "Error interno" }, { status: 500 });
   }
 }
