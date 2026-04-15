@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { useMayolistaStore } from "@/lib/store";
 import { toast } from "sonner";
+import Fuse from "fuse.js";
 
 // ==================== HELPERS ====================
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
@@ -887,388 +888,280 @@ function MayoristaView() {
 
 // ==================== BUSCAR VIEW ====================
 function BuscarView() {
-  const { mayoristaActivo, productos, setProductos, addItem, setCurrentView } = useMayolistaStore();
+  const { mayoristaActivo, productos, setProductos, addItem, setCurrentView, pedidoItems } = useMayolistaStore();
   const [query, setQuery] = useState("");
-  const [selectedProduct, setSelectedProduct] = useState<any>(null);
-  const [cantidad, setCantidad] = useState(1);
-  const [cantidadRegalo, setCantidadRegalo] = useState(0);
-  const [descuentoPct, setDescuentoPct] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [added, setAdded] = useState(false);
   const [listening, setListening] = useState(false);
   const [productsLoaded, setProductsLoaded] = useState(false);
+  const [lastAdded, setLastAdded] = useState<{ nombre: string; cantidad: number } | null>(null);
+  const [showAllBrowse, setShowAllBrowse] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
-  const detectedCantidad = useRef<number>(1);
 
-  // Load ALL products once when mayorista is set
+  // Carga productos al activar el comercio
   useEffect(() => {
     async function load() {
       if (!mayoristaActivo?.id || productsLoaded) return;
       setLoading(true);
       try {
         const res = await fetch(`/api/productos?mayoristaId=${mayoristaActivo.id}`, { headers: authHeaders() });
-        if (res.ok) {
-          const data = await res.json();
-          setProductos(data);
-          setProductsLoaded(true);
-        }
+        if (res.ok) { setProductos(await res.json()); setProductsLoaded(true); }
       } catch { /* ignore */ }
       finally { setLoading(false); }
     }
     load();
   }, [mayoristaActivo?.id, productsLoaded, setProductos]);
 
-  // Client-side search
-  const parsed = parseQuantity(query.trim());
-  detectedCantidad.current = parsed.cantidad;
+  // Detectar cantidad en la búsqueda ("azúcar 400 unidades" → cantidad=400)
+  const parsed = useMemo(() => parseQuantity(query.trim()), [query]);
+  const cantidad = parsed.cantidad;
 
-  // Build Fuse instance once when products load
+  // Fuse.js cargado una vez con los productos
   const fuse = useMemo(() => {
-    if (productos.length === 0) return null;
+    if (!productos.length) return null;
     return new Fuse(productos, {
-      keys: [
-        { name: "descripcion", weight: 0.75 },
-        { name: "codigo", weight: 0.25 },
-      ],
-      threshold: 0.38,
-      ignoreLocation: true,
-      minMatchCharLength: 2,
-      shouldSort: true,
+      keys: [{ name: "descripcion", weight: 0.75 }, { name: "codigo", weight: 0.25 }],
+      threshold: 0.38, ignoreLocation: true, minMatchCharLength: 2, shouldSort: true,
     });
   }, [productos]);
 
-  const results = useMemo(() => {
+  // Búsqueda en 3 niveles: exacto → parcial → fuzzy
+  const resultados = useMemo(() => {
     const cleanQ = parsed.cleanQuery || query.trim();
-    const normalizedQ = normalizeText(cleanQ);
-    if (normalizedQ.length < 2 || productos.length === 0) return [];
+    const nQ = normalizeText(cleanQ);
+    if (nQ.length < 2 || !productos.length) return [];
+    const palabras = nQ.split(/\s+/).filter((w) => w.length >= 2);
+    if (!palabras.length) return [];
 
-    const queryWords = normalizedQ.split(/\s+/).filter((w) => w.length >= 2);
-    if (queryWords.length === 0) return [];
-
-    // Nivel 1: todas las palabras coinciden exactamente
-    const tier1 = productos.filter((p) => {
-      const desc = normalizeText(p.descripcion || "");
-      const cod = normalizeText(p.codigo || "");
-      return queryWords.every((w) => desc.includes(w) || cod.includes(w));
+    const nivel1 = productos.filter((p) => {
+      const d = normalizeText(p.descripcion || ""), c = normalizeText(p.codigo || "");
+      return palabras.every((w) => d.includes(w) || c.includes(w));
     });
+    if (nivel1.length >= 2) return nivel1.slice(0, 10);
 
-    if (tier1.length >= 3) return tier1.slice(0, 80);
-
-    // Nivel 2: alguna palabra coincide
-    const tier2 = productos.filter((p) => {
-      const desc = normalizeText(p.descripcion || "");
-      const cod = normalizeText(p.codigo || "");
-      return queryWords.some((w) => desc.includes(w) || cod.includes(w));
+    const nivel2 = productos.filter((p) => {
+      const d = normalizeText(p.descripcion || ""), c = normalizeText(p.codigo || "");
+      return palabras.some((w) => d.includes(w) || c.includes(w));
     });
+    const fuzzy = fuse ? fuse.search(nQ, { limit: 10 }).map((r) => r.item) : [];
 
-    // Nivel 3: fuzzy con Fuse.js
-    const fuzzy = fuse ? fuse.search(normalizedQ, { limit: 40 }).map((r) => r.item) : [];
-
-    // Merge sin duplicados: tier1 > tier2 > fuzzy
-    const seen = new Set<string>();
-    const merged: typeof productos = [];
-    for (const p of [...tier1, ...tier2, ...fuzzy]) {
-      if (!seen.has(p.id)) {
-        seen.add(p.id);
-        merged.push(p);
-      }
-      if (merged.length >= 80) break;
+    const seen = new Set<string>(); const merged: typeof productos = [];
+    for (const p of [...nivel1, ...nivel2, ...fuzzy]) {
+      if (!seen.has(p.id)) { seen.add(p.id); merged.push(p); }
+      if (merged.length >= 10) break;
     }
     return merged;
   }, [query, productos, fuse, parsed.cleanQuery]);
 
-  // Show all products when no query
-  const displayResults = query.trim().length < 2
-    ? (productos.length > 0 ? productos.slice(0, 100) : [])
-    : results;
+  const mejorResultado = resultados[0] ?? null;
+  const alternativas = resultados.slice(1);
 
-  const handleSearch = useCallback(() => {
-    // Client-side search is already computed above via the reactive filter
-    // This is a no-op trigger for voice search
-  }, []);
+  // Agregar producto al pedido y volver a búsqueda para el siguiente
+  const handleAgregar = useCallback((producto: typeof productos[0], qty: number) => {
+    addItem({ cantidad: qty, cantidadRegalo: 0, precioUnitario: producto.precio, descuentoPct: 0, productoId: producto.id, producto });
+    setLastAdded({ nombre: producto.descripcion, cantidad: qty });
+    setQuery("");
+    setTimeout(() => setLastAdded(null), 3000);
+    setTimeout(() => inputRef.current?.focus(), 50);
+  }, [addItem]);
 
-  // Voice search
-  const toggleVoiceSearch = () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      toast.error("Tu navegador no soporta búsqueda por voz");
-      return;
-    }
-
-    if (listening) {
-      recognitionRef.current?.stop();
-      setListening(false);
-      return;
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.lang = "es-AR";
-    recognition.continuous = false;
-    recognition.interimResults = true;
-
-    let finalTranscript = "";
-    recognition.onresult = (event: any) => {
+  // Búsqueda por voz
+  const toggleVoz = () => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) { toast.error("Tu navegador no soporta búsqueda por voz"); return; }
+    if (listening) { recognitionRef.current?.stop(); setListening(false); return; }
+    const rec = new SR();
+    rec.lang = "es-AR"; rec.continuous = false; rec.interimResults = true;
+    let final = "";
+    rec.onresult = (e: any) => {
       let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          finalTranscript += event.results[i][0].transcript;
-        } else {
-          interim += event.results[i][0].transcript;
-        }
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) final += e.results[i][0].transcript;
+        else interim += e.results[i][0].transcript;
       }
-      setQuery(finalTranscript + interim);
+      setQuery(final + interim);
     };
-
-    recognition.onend = () => {
-      setListening(false);
-      if (finalTranscript.trim()) {
-        setQuery(finalTranscript);
-      }
-    };
-
-    recognition.onerror = () => {
-      setListening(false);
-      toast.error("Error al escuchar. Intentá de nuevo.");
-    };
-
-    recognitionRef.current = recognition;
-    recognition.start();
-    setListening(true);
-  };
-
-  const handleAddToPedido = () => {
-    if (!selectedProduct || cantidad < 1) return;
-    addItem({
-      cantidad,
-      cantidadRegalo,
-      precioUnitario: selectedProduct.precio,
-      descuentoPct,
-      productoId: selectedProduct.id,
-      producto: selectedProduct,
-    });
-    setAdded(true);
-    setTimeout(() => {
-      setAdded(false);
-      setSelectedProduct(null);
-      setCantidad(1);
-      setCantidadRegalo(0);
-      setDescuentoPct(0);
-    }, 800);
+    rec.onend = () => { setListening(false); if (final.trim()) setQuery(final); };
+    rec.onerror = () => { setListening(false); toast.error("Error al escuchar. Intentá de nuevo."); };
+    recognitionRef.current = rec; rec.start(); setListening(true);
   };
 
   if (!mayoristaActivo) {
     return (
       <div className="animate-fade-in-up text-center py-20">
-        <Package className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-        <h3 className="text-xl font-semibold mb-2">Sin mayorista activo</h3>
-        <p className="text-muted-foreground mb-6">Primero configurá un mayorista y cargá tu lista</p>
+        <Package className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-30" />
+        <h3 className="text-xl font-semibold mb-2">Sin comercio activo</h3>
+        <p className="text-muted-foreground mb-6">Primero cargá un comercio y su lista de precios</p>
         <button onClick={() => setCurrentView("mayorista")} className="px-6 py-3 rounded-xl bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors text-base">
-          Ir a mayorista
+          Ir a Comercios
         </button>
       </div>
     );
   }
 
-  // Product detail modal
-  if (selectedProduct) {
-    return (
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="animate-fade-in-up space-y-4">
-        <button onClick={() => setSelectedProduct(null)} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors">
-          <X className="w-4 h-4" /> Volver a resultados
-        </button>
-
-        <div className="p-6 rounded-2xl border bg-card space-y-5">
-          <div>
-            <span className="px-2.5 py-1 rounded-lg text-xs font-mono font-medium bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
-              {selectedProduct.codigo}
-            </span>
-            <h3 className="font-semibold text-lg mt-3">{selectedProduct.descripcion}</h3>
-            <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
-              ${formatPrice(selectedProduct.precio)}
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm font-medium mb-1 block">Cantidad</label>
-              <input
-                type="number"
-                min="1"
-                value={cantidad}
-                onChange={(e) => setCantidad(Math.max(1, parseInt(e.target.value) || 1))}
-                className="w-full px-4 py-3 rounded-xl border bg-background text-foreground text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-1 block">Regalo (unid.)</label>
-              <input
-                type="number"
-                min="0"
-                value={cantidadRegalo}
-                onChange={(e) => setCantidadRegalo(Math.max(0, parseInt(e.target.value) || 0))}
-                className="w-full px-4 py-3 rounded-xl border bg-background text-foreground text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="text-sm font-medium mb-1 block">Descuento (%)</label>
-            <input
-              type="number"
-              min="0"
-              max="100"
-              value={descuentoPct}
-              onChange={(e) => setDescuentoPct(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
-              className="w-full px-4 py-3 rounded-xl border bg-background text-foreground text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-          </div>
-
-          <div className="p-4 rounded-xl bg-muted space-y-1">
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Subtotal</span>
-              <span className="font-semibold">${formatPrice(cantidad * selectedProduct.precio)}</span>
-            </div>
-            {descuentoPct > 0 && (
-              <div className="flex justify-between text-sm text-emerald-600">
-                <span>Descuento {descuentoPct}%</span>
-                <span>-${formatPrice(cantidad * selectedProduct.precio * descuentoPct / 100)}</span>
-              </div>
-            )}
-            <div className="flex justify-between text-base font-bold pt-1 border-t">
-              <span>Total</span>
-              <span className="text-emerald-600 dark:text-emerald-400">
-                ${formatPrice(cantidad * selectedProduct.precio * (1 - descuentoPct / 100))}
-              </span>
-            </div>
-          </div>
-
-          <button
-            onClick={handleAddToPedido}
-            disabled={added}
-            className={`w-full py-4 rounded-xl font-semibold text-base transition-all flex items-center justify-center gap-2 ${
-              added
-                ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
-                : "bg-gradient-to-r from-emerald-500 to-emerald-600 text-white shadow-lg hover:from-emerald-600 hover:to-emerald-700"
-            }`}
-          >
-            {added ? <><Check className="w-5 h-5" /> Agregado al pedido</> : <><Plus className="w-5 h-5" /> Agregar al pedido</>}
-          </button>
-        </div>
-      </motion.div>
-    );
-  }
+  const browseLista = showAllBrowse ? productos : productos.slice(0, 60);
 
   return (
     <div className="animate-fade-in-up space-y-4">
-      <div>
-        <h2 className="text-2xl font-bold">Buscar Productos</h2>
-        <p className="text-muted-foreground mt-1">
-          {productos.length > 0 ? `${productos.length} productos cargados` : "Cargando productos..."}
-        </p>
+      {/* Encabezado */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold">Hacer Pedido</h2>
+          <p className="text-muted-foreground text-sm mt-0.5">{mayoristaActivo.nombre} · {loading ? "Cargando..." : `${productos.length} productos`}</p>
+        </div>
+        {pedidoItems.length > 0 && (
+          <button onClick={() => setCurrentView("pedido")} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500 text-white font-semibold text-sm hover:bg-emerald-600 transition-colors">
+            <ShoppingCart className="w-4 h-4" /> {pedidoItems.length}
+          </button>
+        )}
       </div>
 
-      {/* Search bar */}
+      {/* Barra de búsqueda + voz */}
       <div className="relative">
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
         <input
           ref={inputRef}
           type="text"
-          placeholder="Escribí o hablá para buscar..."
+          placeholder='Escribí o hablá: producto + cantidad (ej: "azúcar 400")'
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="w-full pl-12 pr-14 py-3.5 rounded-xl border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all text-base"
+          className="w-full pl-12 pr-14 py-4 rounded-2xl border-2 bg-card text-foreground focus:outline-none focus:ring-0 focus:border-emerald-400 transition-all text-base"
           autoFocus
         />
         <button
-          onClick={toggleVoiceSearch}
-          className={`absolute right-2 top-1/2 -translate-y-1/2 p-2.5 rounded-lg transition-all ${
-            listening
-              ? "bg-red-100 dark:bg-red-900/40 text-red-600 animate-pulse"
-              : "hover:bg-muted text-muted-foreground hover:text-foreground"
-          }`}
+          onClick={toggleVoz}
+          className={`absolute right-3 top-1/2 -translate-y-1/2 p-2.5 rounded-xl transition-all ${listening ? "bg-red-100 dark:bg-red-900/40 text-red-600 animate-pulse" : "hover:bg-emerald-50 text-muted-foreground hover:text-emerald-600"}`}
           title={listening ? "Dejar de escuchar" : "Buscar por voz"}
         >
           {listening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
         </button>
       </div>
 
-      {/* Detected quantity hint */}
-      {detectedCantidad.current > 1 && query.trim().length > 2 && (
-        <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
-          <Sparkles className="w-4 h-4" />
-          Cantidad detectada: {detectedCantidad.current} unidades
+      {/* Cantidad detectada */}
+      {cantidad > 1 && query.trim().length >= 2 && (
+        <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 text-sm font-medium">
+          <Sparkles className="w-4 h-4 shrink-0" />
+          Cantidad detectada: <strong>{cantidad} unidades</strong>
         </div>
       )}
 
-      {/* Loading state */}
+      {/* Confirmación de último agregado */}
+      <AnimatePresence>
+        {lastAdded && (
+          <motion.div key="added-banner" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            className="flex items-center gap-3 px-4 py-3 rounded-xl bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-200 text-sm font-medium">
+            <Check className="w-4 h-4 shrink-0 text-emerald-600" />
+            <span className="truncate">{lastAdded.nombre}</span>
+            <span className="shrink-0 font-bold">× {lastAdded.cantidad} agregado</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Cargando */}
       {loading && (
         <div className="text-center py-12">
           <Loader2 className="w-8 h-8 animate-spin text-emerald-500 mx-auto mb-2" />
-          <p className="text-sm text-muted-foreground">Cargando {productos.length} productos...</p>
+          <p className="text-sm text-muted-foreground">Cargando lista de productos...</p>
         </div>
       )}
 
-      {/* Results */}
-      {!loading && (
-        <div className="space-y-2 max-h-[calc(100vh-280px)] overflow-y-auto scrollbar-thin">
-          {query.trim().length < 2 && productos.length === 0 && (
-            <div className="text-center py-12 text-muted-foreground">
-              <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p className="text-sm">Cargando productos...</p>
-            </div>
-          )}
-
-          {query.trim().length >= 2 && displayResults.length === 0 && (
+      {/* === RESULTADOS DE BÚSQUEDA === */}
+      {!loading && query.trim().length >= 2 && (
+        <div className="space-y-3">
+          {resultados.length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
               <AlertCircle className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p className="text-sm font-medium">No se encontraron productos</p>
-              <p className="text-xs mt-1">Probá con menos palabras o otra búsqueda</p>
+              <p className="font-medium">No encontramos ese producto</p>
+              <p className="text-xs mt-1">Probá con otra palabra o revisá la escritura</p>
             </div>
           )}
 
-          {displayResults.map((product: any, idx: number) => (
-            <motion.button
-              key={product.id}
-              initial={{ opacity: 0, y: 5 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: Math.min(idx * 0.02, 0.5) }}
-              onClick={() => {
-                setSelectedProduct(product);
-                setCantidad(detectedCantidad.current);
-                setCantidadRegalo(0);
-                setDescuentoPct(0);
-              }}
-              className="w-full text-left p-4 rounded-xl border bg-card hover:border-emerald-300 dark:hover:border-emerald-700 transition-all active:scale-[0.99]"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 shrink-0">
-                      {product.codigo}
-                    </span>
-                  </div>
-                  <p className="font-medium text-sm leading-snug">{product.descripcion}</p>
-                </div>
-                <div className="text-right shrink-0">
-                  <p className="font-bold text-emerald-600 dark:text-emerald-400 text-sm">
-                    ${formatPrice(product.precio)}
-                  </p>
-                </div>
+          {/* Mejor resultado — card prominente */}
+          {mejorResultado && (
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+              className="p-4 rounded-2xl border-2 border-emerald-400 bg-emerald-50/60 dark:bg-emerald-950/25 space-y-3">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">Mejor coincidencia</span>
               </div>
-            </motion.button>
-          ))}
-
-          {displayResults.length === productos.length && productos.length > 100 && query.trim().length < 2 && (
-            <p className="text-center text-xs text-muted-foreground py-4">
-              Mostrando los primeros 100 productos. Escribí para filtrar.
-            </p>
+              {mejorResultado.codigo && (
+                <span className="inline-block px-2 py-0.5 rounded text-[11px] font-mono font-semibold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
+                  {mejorResultado.codigo}
+                </span>
+              )}
+              <p className="font-bold text-base leading-snug">{mejorResultado.descripcion}</p>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Precio unitario: <span className="font-semibold text-foreground">${formatPrice(mejorResultado.precio)}</span></span>
+                <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                  Total × {cantidad}: ${formatPrice(mejorResultado.precio * cantidad)}
+                </span>
+              </div>
+              <button
+                onClick={() => handleAgregar(mejorResultado, cantidad)}
+                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold text-base shadow-lg hover:from-emerald-600 hover:to-emerald-700 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+              >
+                <ShoppingCart className="w-5 h-5" />
+                Agregar {cantidad} unidad{cantidad !== 1 ? "es" : ""} al pedido
+              </button>
+            </motion.div>
           )}
 
-          {query.trim().length >= 2 && results.length > 0 && (
-            <p className="text-center text-xs text-muted-foreground py-2">
-              {results.length} resultado{results.length !== 1 ? "s" : ""} encontrado{results.length !== 1 ? "s" : ""}
-            </p>
+          {/* Alternativas */}
+          {alternativas.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide pl-1">
+                ¿No es ese? Otras opciones:
+              </p>
+              {alternativas.map((p) => (
+                <motion.div key={p.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                  className="flex items-center gap-3 p-3 rounded-xl border bg-card hover:border-emerald-300 dark:hover:border-emerald-700 transition-all">
+                  <div className="flex-1 min-w-0">
+                    {p.codigo && (
+                      <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-mono bg-muted text-muted-foreground mb-0.5">
+                        {p.codigo}
+                      </span>
+                    )}
+                    <p className="font-medium text-sm leading-snug truncate">{p.descripcion}</p>
+                    <p className="text-xs text-muted-foreground">
+                      ${formatPrice(p.precio)} c/u
+                      {cantidad > 1 && <span className="text-emerald-600 dark:text-emerald-400 font-semibold ml-2">Total: ${formatPrice(p.precio * cantidad)}</span>}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleAgregar(p, cantidad)}
+                    className="shrink-0 px-3 py-2.5 rounded-xl bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 text-sm font-bold hover:bg-emerald-200 dark:hover:bg-emerald-800/50 transition-colors"
+                  >
+                    + Agregar
+                  </button>
+                </motion.div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* === LISTA COMPLETA (sin búsqueda) === */}
+      {!loading && query.trim().length < 2 && (
+        <div className="space-y-2">
+          {productos.length === 0 && (
+            <div className="text-center py-12 text-muted-foreground">
+              <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
+              <p className="text-sm">No hay productos cargados para este comercio</p>
+            </div>
+          )}
+          {browseLista.map((p) => (
+            <button key={p.id} onClick={() => { setQuery(p.descripcion); setTimeout(() => inputRef.current?.focus(), 50); }}
+              className="w-full text-left flex items-center gap-3 p-3 rounded-xl border bg-card hover:border-emerald-300 dark:hover:border-emerald-700 transition-all active:scale-[0.99]">
+              <div className="flex-1 min-w-0">
+                {p.codigo && <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-mono bg-muted text-muted-foreground mb-0.5">{p.codigo}</span>}
+                <p className="text-sm font-medium leading-snug truncate">{p.descripcion}</p>
+              </div>
+              <span className="shrink-0 font-bold text-emerald-600 dark:text-emerald-400 text-sm">${formatPrice(p.precio)}</span>
+            </button>
+          ))}
+          {productos.length > 60 && (
+            <button onClick={() => setShowAllBrowse((v) => !v)} className="w-full py-3 text-sm text-emerald-600 dark:text-emerald-400 font-semibold hover:underline">
+              {showAllBrowse ? "Mostrar menos" : `Ver los ${productos.length - 60} productos restantes`}
+            </button>
           )}
         </div>
       )}
@@ -1278,16 +1171,12 @@ function BuscarView() {
 
 // ==================== PEDIDO VIEW ====================
 function PedidoView() {
-  const { pedidoItems, removeItem, updateItem, clearPedido, getTotalPedido, setCurrentView, mayoristaActivo } = useMayolistaStore();
+  const { pedidoItems, removeItem, updateItem, clearPedido, getTotalPedido, setCurrentView, mayoristaActivo, user } = useMayolistaStore();
   const [sending, setSending] = useState(false);
-
   const total = getTotalPedido();
 
-  const handleSend = async () => {
-    if (pedidoItems.length === 0) {
-      toast.error("El pedido está vacío");
-      return;
-    }
+  const handleConfirmar = async () => {
+    if (!pedidoItems.length) { toast.error("El pedido está vacío"); return; }
     setSending(true);
     try {
       const res = await fetch("/api/pedidos", {
@@ -1295,47 +1184,106 @@ function PedidoView() {
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           mayoristaId: mayoristaActivo?.id,
-          items: pedidoItems.map((item) => ({
-            productoId: item.productoId,
-            cantidad: item.cantidad,
-            cantidadRegalo: item.cantidadRegalo,
-            descuentoPct: item.descuentoPct,
-            precioUnitario: item.precioUnitario,
+          items: pedidoItems.map((i) => ({
+            productoId: i.productoId, cantidad: i.cantidad,
+            cantidadRegalo: i.cantidadRegalo, descuentoPct: i.descuentoPct, precioUnitario: i.precioUnitario,
           })),
         }),
       });
-      if (res.ok) {
-        toast.success("Pedido enviado OK");
-        clearPedido();
-        setCurrentView("historial");
-      } else {
-        toast.error("Error al enviar pedido");
-      }
-    } catch {
-      toast.error("Error de conexión");
-    } finally {
-      setSending(false);
-    }
+      if (res.ok) { toast.success("Pedido confirmado y guardado"); clearPedido(); setCurrentView("historial"); }
+      else toast.error("Error al confirmar el pedido");
+    } catch { toast.error("Error de conexión"); }
+    finally { setSending(false); }
   };
 
-  const handleShareWhatsApp = () => {
-    if (pedidoItems.length === 0) return;
-    const text = `*Pedido - ${mayoristaActivo?.nombre || "Mayorista"}*\n\n` +
-      pedidoItems.map((item) =>
-        `- ${item.producto.descripcion} x${item.cantidad}${item.cantidadRegalo > 0 ? ` (+${item.cantidadRegalo} regalo)` : ""} - $${formatPrice(item.precioUnitario * item.cantidad * (1 - item.descuentoPct / 100))}`
-      ).join("\n") +
-      `\n\n*Total: $${formatPrice(total)}*`;
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+  const handleWhatsApp = () => {
+    if (!pedidoItems.length) return;
+    const lineas = pedidoItems.map((i) => {
+      const subtotal = i.precioUnitario * i.cantidad * (1 - i.descuentoPct / 100);
+      const extras = [
+        i.cantidadRegalo > 0 ? `+${i.cantidadRegalo} bonif.` : "",
+        i.descuentoPct > 0 ? `${i.descuentoPct}% dto` : "",
+      ].filter(Boolean).join(" · ");
+      return `• [${i.producto.codigo || "---"}] ${i.producto.descripcion}\n  x${i.cantidad} × $${formatPrice(i.precioUnitario)} = $${formatPrice(subtotal)}${extras ? `  (${extras})` : ""}`;
+    }).join("\n");
+    const texto = `*PEDIDO — ${mayoristaActivo?.nombre || "Comercio"}*\n*Vendedor: ${(user as any)?.name || ""}*\n*Fecha: ${new Date().toLocaleDateString("es-AR")}*\n\n${lineas}\n\n*TOTAL: $${formatPrice(total)}*`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, "_blank");
   };
 
-  if (pedidoItems.length === 0) {
+  const handleEmail = () => {
+    if (!pedidoItems.length) return;
+    const asunto = `Pedido ${mayoristaActivo?.nombre || "Comercio"} — ${new Date().toLocaleDateString("es-AR")}`;
+    const cuerpo = pedidoItems.map((i) => {
+      const subtotal = i.precioUnitario * i.cantidad * (1 - i.descuentoPct / 100);
+      return `${i.producto.codigo || ""} | ${i.producto.descripcion} | x${i.cantidad} | $${formatPrice(i.precioUnitario)} | $${formatPrice(subtotal)}`;
+    }).join("\n") + `\n\nTOTAL: $${formatPrice(total)}`;
+    window.open(`mailto:?subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`);
+  };
+
+  const handlePDF = () => {
+    const fecha = new Date().toLocaleDateString("es-AR");
+    const filas = pedidoItems.map((i) => {
+      const subtotal = i.precioUnitario * i.cantidad * (1 - i.descuentoPct / 100);
+      const extras = [
+        i.cantidadRegalo > 0 ? `+${i.cantidadRegalo} bonif.` : "",
+        i.descuentoPct > 0 ? `${i.descuentoPct}% dto` : "",
+      ].filter(Boolean).join(", ");
+      return `<tr>
+        <td>${i.producto.codigo || "---"}</td>
+        <td>${i.producto.descripcion}</td>
+        <td style="text-align:center">${i.cantidad}${i.cantidadRegalo > 0 ? `<br><small style="color:#059669">+${i.cantidadRegalo} bon.</small>` : ""}</td>
+        <td style="text-align:right">$${formatPrice(i.precioUnitario)}</td>
+        <td style="text-align:center;color:#6b7280">${extras || "—"}</td>
+        <td style="text-align:right;font-weight:bold;color:#059669">$${formatPrice(subtotal)}</td>
+      </tr>`;
+    }).join("");
+    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>Pedido</title>
+    <style>body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{color:#059669;margin:0 0 4px}
+    .info{color:#6b7280;font-size:13px;margin-bottom:20px}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th{background:#059669;color:#fff;padding:8px 10px;text-align:left}
+    td{border-bottom:1px solid #e5e7eb;padding:7px 10px;vertical-align:top}
+    tr:nth-child(even) td{background:#f9fafb}
+    .total{font-size:20px;font-weight:bold;text-align:right;margin-top:16px;color:#059669}
+    @media print{body{padding:12px}}</style></head>
+    <body>
+    <h1>Pedido — ${mayoristaActivo?.nombre || "Comercio"}</h1>
+    <div class="info">Vendedor: ${(user as any)?.name || "—"} &nbsp;|&nbsp; Fecha: ${fecha}</div>
+    <table><thead><tr><th>Código</th><th>Descripción</th><th>Cant.</th><th>P. Unit.</th><th>Bonif./Dto.</th><th>Subtotal</th></tr></thead>
+    <tbody>${filas}</tbody></table>
+    <div class="total">TOTAL: $${formatPrice(total)}</div>
+    </body></html>`;
+    const win = window.open("", "_blank");
+    if (win) { win.document.write(html); win.document.close(); win.focus(); setTimeout(() => win.print(), 400); }
+  };
+
+  const handleExcelPedido = async () => {
+    const XLSX = await import("xlsx");
+    const data = pedidoItems.map((i) => ({
+      "Código": i.producto.codigo || "",
+      "Descripción": i.producto.descripcion,
+      "Cantidad": i.cantidad,
+      "Bonif. (unid.)": i.cantidadRegalo,
+      "Precio unitario": i.precioUnitario,
+      "Descuento %": i.descuentoPct,
+      "Subtotal": parseFloat((i.precioUnitario * i.cantidad * (1 - i.descuentoPct / 100)).toFixed(2)),
+    }));
+    data.push({ "Código": "", "Descripción": "TOTAL", "Cantidad": 0, "Bonif. (unid.)": 0, "Precio unitario": 0, "Descuento %": 0, "Subtotal": parseFloat(total.toFixed(2)) });
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Pedido");
+    XLSX.writeFile(wb, `pedido-${(mayoristaActivo?.nombre || "comercio").replace(/\s+/g, "-")}-${new Date().toLocaleDateString("es-AR").replace(/\//g, "-")}.xlsx`);
+  };
+
+  if (!pedidoItems.length) {
     return (
       <div className="animate-fade-in-up space-y-4">
         <h2 className="text-2xl font-bold">Mi Pedido</h2>
         <div className="text-center py-16">
           <ShoppingCart className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-30" />
-          <p className="text-muted-foreground">Tu pedido está vacío</p>
-          <button onClick={() => setCurrentView("buscar")} className="mt-4 px-6 py-3 rounded-xl bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors">
+          <p className="text-muted-foreground">El pedido está vacío</p>
+          <p className="text-xs text-muted-foreground mt-1">Buscá productos para armar tu pedido</p>
+          <button onClick={() => setCurrentView("buscar")} className="mt-5 px-6 py-3 rounded-xl bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors text-base">
             Buscar productos
           </button>
         </div>
@@ -1346,80 +1294,93 @@ function PedidoView() {
   return (
     <div className="animate-fade-in-up space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Mi Pedido</h2>
-        <span className="text-sm text-muted-foreground">{pedidoItems.length} ítems</span>
+        <div>
+          <h2 className="text-2xl font-bold">Mi Pedido</h2>
+          <p className="text-muted-foreground text-sm">{mayoristaActivo?.nombre} · {pedidoItems.length} ítems</p>
+        </div>
+        <button onClick={() => setCurrentView("buscar")} className="flex items-center gap-1.5 px-3 py-2 rounded-xl border text-sm font-medium hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors">
+          <Plus className="w-4 h-4" /> Agregar
+        </button>
       </div>
 
-      <div className="space-y-2 max-h-[calc(100vh-320px)] overflow-y-auto scrollbar-thin">
-        {pedidoItems.map((item) => (
-          <motion.div
-            key={item.productoId}
-            layout
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="p-4 rounded-xl border bg-card"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-sm leading-snug">{item.producto.descripcion}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  ${formatPrice(item.precioUnitario)} c/u · {item.cantidadRegalo > 0 && `${item.cantidadRegalo} regalo · `}{item.descuentoPct > 0 && `${item.descuentoPct}% dto`}
-                </p>
+      {/* Tabla de ítems */}
+      <div className="space-y-2 max-h-[calc(100vh-360px)] overflow-y-auto scrollbar-thin">
+        {pedidoItems.map((item) => {
+          const subtotal = item.precioUnitario * item.cantidad * (1 - item.descuentoPct / 100);
+          return (
+            <motion.div key={item.productoId} layout initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}
+              className="p-3 rounded-xl border bg-card">
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="flex-1 min-w-0">
+                  {item.producto.codigo && (
+                    <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-mono bg-muted text-muted-foreground mb-0.5">{item.producto.codigo}</span>
+                  )}
+                  <p className="font-semibold text-sm leading-snug">{item.producto.descripcion}</p>
+                </div>
+                <button onClick={() => removeItem(item.productoId)} className="p-1.5 rounded-lg hover:bg-destructive/10 hover:text-destructive transition-colors shrink-0">
+                  <X className="w-4 h-4" />
+                </button>
               </div>
-              <button onClick={() => removeItem(item.productoId)} className="p-1.5 rounded-lg hover:bg-destructive/10 hover:text-destructive transition-colors">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="flex items-center gap-2 mt-3">
-              <button
-                onClick={() => updateItem(item.productoId, { cantidad: Math.max(1, item.cantidad - 1) })}
-                className="w-8 h-8 rounded-lg border flex items-center justify-center hover:bg-muted transition-colors font-bold"
-              >
-                -
-              </button>
-              <input
-                type="number"
-                value={item.cantidad}
-                onChange={(e) => updateItem(item.productoId, { cantidad: Math.max(1, parseInt(e.target.value) || 1) })}
-                className="w-14 h-8 rounded-lg border bg-background text-center text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-              <button
-                onClick={() => updateItem(item.productoId, { cantidad: item.cantidad + 1 })}
-                className="w-8 h-8 rounded-lg border flex items-center justify-center hover:bg-muted transition-colors font-bold"
-              >
-                +
-              </button>
-              <span className="ml-auto font-bold text-sm">
-                ${formatPrice(item.precioUnitario * item.cantidad * (1 - item.descuentoPct / 100))}
-              </span>
-            </div>
-          </motion.div>
-        ))}
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground mb-2">
+                <span>P. unit: <b className="text-foreground">${formatPrice(item.precioUnitario)}</b></span>
+                <span className="text-right">Subtotal: <b className="text-emerald-600 dark:text-emerald-400">${formatPrice(subtotal)}</b></span>
+                {item.cantidadRegalo > 0 && <span className="text-emerald-600">+{item.cantidadRegalo} bonificación</span>}
+                {item.descuentoPct > 0 && <span className="text-right text-emerald-600">{item.descuentoPct}% descuento</span>}
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => updateItem(item.productoId, { cantidad: Math.max(1, item.cantidad - 1) })}
+                  className="w-8 h-8 rounded-lg border flex items-center justify-center hover:bg-muted transition-colors font-bold text-base">−</button>
+                <input type="number" value={item.cantidad}
+                  onChange={(e) => updateItem(item.productoId, { cantidad: Math.max(1, parseInt(e.target.value) || 1) })}
+                  className="w-14 h-8 rounded-lg border bg-background text-center text-sm font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                <button onClick={() => updateItem(item.productoId, { cantidad: item.cantidad + 1 })}
+                  className="w-8 h-8 rounded-lg border flex items-center justify-center hover:bg-muted transition-colors font-bold text-base">+</button>
+                <div className="ml-auto flex items-center gap-2">
+                  <input type="number" min="0" max="100" placeholder="Dto%" value={item.descuentoPct || ""}
+                    onChange={(e) => updateItem(item.productoId, { descuentoPct: Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)) })}
+                    className="w-16 h-8 rounded-lg border bg-background text-center text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                  <input type="number" min="0" placeholder="Bon." value={item.cantidadRegalo || ""}
+                    onChange={(e) => updateItem(item.productoId, { cantidadRegalo: Math.max(0, parseInt(e.target.value) || 0) })}
+                    className="w-14 h-8 rounded-lg border bg-background text-center text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                </div>
+              </div>
+            </motion.div>
+          );
+        })}
       </div>
 
-      {/* Total & Actions */}
-      <div className="sticky bottom-20 md:bottom-4 bg-card border rounded-2xl p-4 space-y-3 shadow-lg">
+      {/* Total y acciones */}
+      <div className="sticky bottom-20 md:bottom-4 bg-card border rounded-2xl p-4 space-y-3 shadow-xl">
         <div className="flex justify-between items-center">
-          <span className="font-semibold text-lg">Total</span>
+          <span className="font-bold text-lg">Total del pedido</span>
           <span className="font-bold text-2xl text-emerald-600 dark:text-emerald-400">${formatPrice(total)}</span>
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={handleShareWhatsApp}
-            className="flex-1 py-3 rounded-xl bg-green-600 text-white font-semibold hover:bg-green-700 transition-colors flex items-center justify-center gap-2 text-sm"
-          >
-            <Send className="w-4 h-4" />
-            WhatsApp
+        {/* Exportar */}
+        <div className="grid grid-cols-4 gap-2">
+          <button onClick={handleWhatsApp}
+            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-green-600 text-white font-semibold text-xs hover:bg-green-700 transition-colors">
+            <Send className="w-4 h-4" /> WhatsApp
           </button>
-          <button
-            onClick={handleSend}
-            disabled={sending}
-            className="flex-1 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm"
-          >
-            {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Check className="w-4 h-4" /> Confirmar</>}
+          <button onClick={handlePDF}
+            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-red-500 text-white font-semibold text-xs hover:bg-red-600 transition-colors">
+            <FileSpreadsheet className="w-4 h-4" /> PDF
+          </button>
+          <button onClick={handleExcelPedido}
+            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-emerald-600 text-white font-semibold text-xs hover:bg-emerald-700 transition-colors">
+            <FileSpreadsheet className="w-4 h-4" /> Excel
+          </button>
+          <button onClick={handleEmail}
+            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-blue-500 text-white font-semibold text-xs hover:bg-blue-600 transition-colors">
+            <Send className="w-4 h-4" /> Email
           </button>
         </div>
-        <button onClick={() => { if (confirm("¿Vaciar el pedido?")) clearPedido(); }} className="w-full py-2 text-xs text-destructive hover:underline text-center">
+        {/* Confirmar */}
+        <button onClick={handleConfirmar} disabled={sending}
+          className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold text-base shadow-lg hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+          {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Check className="w-5 h-5" /> Confirmar y guardar pedido</>}
+        </button>
+        <button onClick={() => { if (confirm("¿Querés vaciar el pedido actual?")) clearPedido(); }}
+          className="w-full py-2 text-xs text-destructive hover:underline text-center">
           Vaciar pedido
         </button>
       </div>
