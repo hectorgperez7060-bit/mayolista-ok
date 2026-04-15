@@ -1215,18 +1215,42 @@ function PedidoView() {
     if (!pedidoItems.length) { toast.error("El pedido está vacío"); return; }
     setSending(true);
     try {
+      // Si hay nombre de cliente, buscar o crear el registro
+      let clienteId: string | null = null;
+      if (nombreCliente.trim()) {
+        const cRes = await fetch("/api/clientes", { headers: authHeaders() });
+        if (cRes.ok) {
+          const lista = await cRes.json();
+          const existente = lista.find((c: any) =>
+            c.nombre.toLowerCase().trim() === nombreCliente.toLowerCase().trim()
+          );
+          if (existente) {
+            clienteId = existente.id;
+          } else {
+            const cCreate = await fetch("/api/clientes", {
+              method: "POST",
+              headers: authHeaders({ "Content-Type": "application/json" }),
+              body: JSON.stringify({ nombre: nombreCliente.trim(), direccion: direccionCliente.trim() || undefined }),
+            });
+            if (cCreate.ok) { const c = await cCreate.json(); clienteId = c.id; }
+          }
+        }
+      }
+
       const res = await fetch("/api/pedidos", {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           mayoristaId: mayoristaActivo?.id,
+          clienteId,
+          observaciones: direccionCliente.trim() || undefined,
           items: pedidoItems.map((i) => ({
             productoId: i.productoId, cantidad: i.cantidad,
             cantidadRegalo: i.cantidadRegalo, descuentoPct: i.descuentoPct, precioUnitario: i.precioUnitario,
           })),
         }),
       });
-      if (res.ok) { toast.success("Pedido confirmado y guardado"); clearPedido(); setCurrentView("historial"); }
+      if (res.ok) { toast.success("Pedido guardado"); clearPedido(); setCurrentView("historial"); }
       else toast.error("Error al confirmar el pedido");
     } catch { toast.error("Error de conexión"); }
     finally { setSending(false); }
@@ -1638,46 +1662,109 @@ function ClientesView() {
 // ==================== HISTORIAL VIEW ====================
 function HistorialView() {
   const [pedidos, setPedidos] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
+      setLoading(true);
       try {
         const res = await fetch("/api/pedidos", { headers: authHeaders() });
         if (res.ok) setPedidos(await res.json());
       } catch { /* ignore */ }
+      finally { setLoading(false); }
     }
     load();
   }, []);
 
   return (
-    <div className="animate-fade-in-up space-y-6">
+    <div className="animate-fade-in-up space-y-4">
       <BackButton />
-      <h2 className="text-2xl font-bold">Historial de Pedidos</h2>
+      <div>
+        <h2 className="text-2xl font-bold">Historial de Pedidos</h2>
+        <p className="text-muted-foreground text-sm mt-1">Tocá un pedido para ver el detalle</p>
+      </div>
 
-      {pedidos.length === 0 ? (
+      {loading ? (
+        <div className="flex justify-center py-16">
+          <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+        </div>
+      ) : pedidos.length === 0 ? (
         <div className="text-center py-16">
           <History className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-30" />
           <p className="text-muted-foreground">No hay pedidos aún</p>
-          <p className="text-xs text-muted-foreground mt-1">Tus pedidos confirmados van a aparecer acá</p>
+          <p className="text-xs text-muted-foreground mt-1">Los pedidos confirmados aparecen acá</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {pedidos.map((p: any) => (
-            <div key={p.id} className="p-4 rounded-xl border bg-card">
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="font-semibold text-sm">Pedido #{p.numero}</p>
-                  <p className="text-xs text-muted-foreground">{p.mayorista?.nombre} · {new Date(p.createdAt).toLocaleDateString("es-AR")}</p>
-                </div>
-                <span className={`px-2 py-1 rounded-lg text-xs font-medium ${
-                  p.estado === "confirmado" ? "bg-emerald-100 text-emerald-700" : "bg-muted text-muted-foreground"
-                }`}>
-                  {p.estado}
-                </span>
+        <div className="space-y-2">
+          {pedidos.map((p: any) => {
+            const isOpen = expandedId === p.id;
+            const clienteNombre = p.cliente?.nombre || "Sin cliente";
+            const clienteDireccion = p.cliente?.direccion || p.observaciones || "";
+            const fecha = new Date(p.createdAt).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
+            const hora = new Date(p.createdAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
+            const itemCount = p.items?.length || 0;
+
+            return (
+              <div key={p.id} className="rounded-2xl border bg-card overflow-hidden">
+                {/* Cabecera del pedido — siempre visible */}
+                <button
+                  onClick={() => setExpandedId(isOpen ? null : p.id)}
+                  className="w-full p-4 text-left hover:bg-muted/40 active:bg-muted/60 transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center shrink-0">
+                        <Users className="w-5 h-5 text-emerald-600" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-bold text-base leading-tight truncate">{clienteNombre}</p>
+                        {clienteDireccion && (
+                          <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5 truncate">
+                            <MapPin className="w-3 h-3 shrink-0" />{clienteDireccion}
+                          </p>
+                        )}
+                        <p className="text-xs text-muted-foreground mt-0.5">{fecha} {hora} · {itemCount} ítem{itemCount !== 1 ? "s" : ""}</p>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="font-bold text-emerald-600 text-lg">${formatPrice(p.total)}</p>
+                      <ChevronRight className={`w-4 h-4 text-muted-foreground ml-auto mt-1 transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                    </div>
+                  </div>
+                </button>
+
+                {/* Detalle expandible */}
+                {isOpen && (
+                  <div className="border-t bg-muted/20 px-4 pb-4 pt-3 space-y-2">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">{p.numero} · {p.mayorista?.nombre}</p>
+                    {p.items?.map((item: any) => {
+                      const subtotal = item.precioUnitario * item.cantidad * (1 - item.descuentoPct / 100);
+                      return (
+                        <div key={item.id} className="flex items-start justify-between gap-2 py-1.5 border-b border-border/50 last:border-0">
+                          <div className="min-w-0 flex-1">
+                            {item.producto?.codigo && (
+                              <span className="inline-block px-1 py-0.5 rounded text-[10px] font-mono bg-muted text-muted-foreground mr-1">{item.producto.codigo}</span>
+                            )}
+                            <span className="text-sm font-medium">{item.producto?.descripcion}</span>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              x{item.cantidad}{item.cantidadRegalo > 0 ? ` +${item.cantidadRegalo} bon.` : ""} · ${formatPrice(item.precioUnitario)} c/u
+                              {item.descuentoPct > 0 && <span className="text-emerald-600"> · {item.descuentoPct}% dto</span>}
+                            </p>
+                          </div>
+                          <p className="font-semibold text-emerald-600 text-sm shrink-0">${formatPrice(subtotal)}</p>
+                        </div>
+                      );
+                    })}
+                    <div className="flex justify-between items-center pt-2 font-bold text-base">
+                      <span>Total</span>
+                      <span className="text-emerald-600">${formatPrice(p.total)}</span>
+                    </div>
+                  </div>
+                )}
               </div>
-              <p className="font-bold text-emerald-600 mt-2">${formatPrice(p.total)}</p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
