@@ -1207,6 +1207,8 @@ function BuscarView() {
 function PedidoView() {
   const { pedidoItems, removeItem, updateItem, clearPedido, getTotalPedido, setCurrentView, mayoristaActivo, user, clienteActivo, descuentoGlobal, logo } = useMayolistaStore();
   const [sending, setSending] = useState(false);
+  const [nombreCliente, setNombreCliente] = useState((clienteActivo as any)?.nombre || "");
+  const [direccionCliente, setDireccionCliente] = useState((clienteActivo as any)?.direccion || "");
   const total = getTotalPedido();
 
   const handleConfirmar = async () => {
@@ -1240,17 +1242,20 @@ function PedidoView() {
       ].filter(Boolean).join(" · ");
       return `• [${i.producto.codigo || "---"}] ${i.producto.descripcion}\n  x${i.cantidad} × $${formatPrice(i.precioUnitario)} = $${formatPrice(subtotal)}${extras ? `  (${extras})` : ""}`;
     }).join("\n");
-    const texto = `*PEDIDO — ${mayoristaActivo?.nombre || "Comercio"}*\n*Vendedor: ${(user as any)?.name || ""}*\n*Fecha: ${new Date().toLocaleDateString("es-AR")}*\n\n${lineas}\n\n*TOTAL: $${formatPrice(total)}*`;
+    const clienteLinea = nombreCliente ? `*Cliente: ${nombreCliente}*${direccionCliente ? `\n*Dirección: ${direccionCliente}*` : ""}\n` : "";
+    const texto = `*PEDIDO — ${mayoristaActivo?.nombre || "Comercio"}*\n${clienteLinea}*Vendedor: ${(user as any)?.name || ""}*\n*Fecha: ${new Date().toLocaleDateString("es-AR")}*\n\n${lineas}\n\n*TOTAL: $${formatPrice(total)}*`;
     window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, "_blank");
   };
 
   const handleEmail = () => {
     if (!pedidoItems.length) return;
-    const asunto = `Pedido ${mayoristaActivo?.nombre || "Comercio"} — ${new Date().toLocaleDateString("es-AR")}`;
-    const cuerpo = pedidoItems.map((i) => {
-      const subtotal = i.precioUnitario * i.cantidad * (1 - i.descuentoPct / 100);
-      return `${i.producto.codigo || ""} | ${i.producto.descripcion} | x${i.cantidad} | $${formatPrice(i.precioUnitario)} | $${formatPrice(subtotal)}`;
-    }).join("\n") + `\n\nTOTAL: $${formatPrice(total)}`;
+    const asunto = `Pedido ${mayoristaActivo?.nombre || "Comercio"}${nombreCliente ? ` — ${nombreCliente}` : ""} — ${new Date().toLocaleDateString("es-AR")}`;
+    const clienteInfo = nombreCliente ? `Cliente: ${nombreCliente}${direccionCliente ? `\nDirección: ${direccionCliente}` : ""}\n` : "";
+    const cuerpo = `${clienteInfo}Vendedor: ${(user as any)?.name || ""}\nFecha: ${new Date().toLocaleDateString("es-AR")}\n\n` +
+      pedidoItems.map((i) => {
+        const subtotal = i.precioUnitario * i.cantidad * (1 - i.descuentoPct / 100);
+        return `${i.producto.codigo || ""} | ${i.producto.descripcion} | x${i.cantidad} | $${formatPrice(i.precioUnitario)} | $${formatPrice(subtotal)}`;
+      }).join("\n") + `\n\nTOTAL: $${formatPrice(total)}`;
     window.open(`mailto:?subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`);
   };
 
@@ -1259,7 +1264,8 @@ function PedidoView() {
     const fecha = new Date().toLocaleDateString("es-AR");
     const comercioNombre = mayoristaActivo?.nombre || "Comercio";
     const vendedorNombre = (user as any)?.name || "";
-    const clienteNombre = (clienteActivo as any)?.nombre || "";
+    const clienteNombre = nombreCliente;
+    const clienteDireccion = direccionCliente;
 
     const { default: jsPDF } = await import("jspdf");
     const { default: autoTable } = await import("jspdf-autotable");
@@ -1287,6 +1293,7 @@ function PedidoView() {
     doc.text(`Fecha: ${fecha}`, textStartX, 37);
     if (clienteNombre) {
       doc.text(`Cliente: ${clienteNombre}`, 130, 30);
+      if (clienteDireccion) doc.text(`Dir: ${clienteDireccion}`, 130, 37);
     }
 
     doc.setTextColor(0, 0, 0);
@@ -1362,7 +1369,7 @@ function PedidoView() {
     const XLSX = await import("xlsx");
     const fecha = new Date().toLocaleDateString("es-AR");
     const comercioNombre = mayoristaActivo?.nombre || "comercio";
-    const clienteNombre = (clienteActivo as any)?.nombre || "";
+    const clienteNombre = nombreCliente;
     const vendedorNombre = (user as any)?.name || "";
 
     // Encabezado informativo
@@ -1437,8 +1444,31 @@ function PedidoView() {
         </button>
       </div>
 
+      {/* Cliente */}
+      <div className="p-4 rounded-2xl border bg-card space-y-2">
+        <div className="flex items-center gap-2 mb-1">
+          <Users className="w-4 h-4 text-emerald-600" />
+          <span className="font-semibold text-sm">Datos del cliente</span>
+        </div>
+        <input
+          type="text"
+          placeholder="Nombre o razón social *"
+          value={nombreCliente}
+          onChange={(e) => setNombreCliente(e.target.value)}
+          className="w-full px-3 py-2.5 rounded-xl border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        />
+        <input
+          type="text"
+          placeholder="Dirección (opcional)"
+          value={direccionCliente}
+          onChange={(e) => setDireccionCliente(e.target.value)}
+          className="w-full px-3 py-2.5 rounded-xl border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        />
+        <p className="text-xs text-muted-foreground">Aparece en el PDF, WhatsApp y email del pedido</p>
+      </div>
+
       {/* Tabla de ítems */}
-      <div className="space-y-2 max-h-[calc(100vh-360px)] overflow-y-auto scrollbar-thin">
+      <div className="space-y-2 max-h-[calc(100vh-460px)] overflow-y-auto scrollbar-thin">
         {pedidoItems.map((item) => {
           const subtotal = item.precioUnitario * item.cantidad * (1 - item.descuentoPct / 100);
           return (
