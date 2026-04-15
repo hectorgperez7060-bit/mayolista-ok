@@ -28,6 +28,7 @@ import {
   Mic,
   MicOff,
   ChevronRight,
+  ChevronLeft,
   Sparkles,
   Pencil,
   Layers,
@@ -77,6 +78,20 @@ function parseQuantity(q: string): { cleanQuery: string; cantidad: number } {
     }
   }
   return { cleanQuery: q, cantidad: 1 };
+}
+
+// ==================== BACK BUTTON ====================
+function BackButton({ to = "buscar", label = "Atrás" }: { to?: string; label?: string }) {
+  const { setCurrentView } = useMayolistaStore();
+  return (
+    <button
+      onClick={() => setCurrentView(to)}
+      className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors text-sm font-medium mb-1"
+    >
+      <ChevronLeft className="w-4 h-4" />
+      {label}
+    </button>
+  );
 }
 
 // ==================== LOGIN VIEW ====================
@@ -537,7 +552,7 @@ function MayoristaView() {
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" }) as Record<string, any>[];
       if (rows.length === 0) { toast.error("El archivo está vacío"); return 0; }
 
       setUploadProgress(`Procesando ${rows.length} filas...`);
@@ -674,6 +689,7 @@ function MayoristaView() {
   if (mayoristaActivo) {
     return (
       <div className="animate-fade-in-up space-y-6">
+        <BackButton />
         <div>
           <h2 className="text-2xl font-bold">Mi Lista</h2>
           <p className="text-muted-foreground mt-1">Actualizá los precios o gestioná tus productos</p>
@@ -1069,7 +1085,7 @@ function BuscarView() {
 
 // ==================== PEDIDO VIEW ====================
 function PedidoView() {
-  const { pedidoItems, removeItem, updateItem, clearPedido, getTotalPedido, setCurrentView, mayoristaActivo, user } = useMayolistaStore();
+  const { pedidoItems, removeItem, updateItem, clearPedido, getTotalPedido, setCurrentView, mayoristaActivo, user, clienteActivo, descuentoGlobal } = useMayolistaStore();
   const [sending, setSending] = useState(false);
   const total = getTotalPedido();
 
@@ -1118,45 +1134,120 @@ function PedidoView() {
     window.open(`mailto:?subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`);
   };
 
-  const handlePDF = () => {
+  const handlePDF = async () => {
+    if (!pedidoItems.length) return;
     const fecha = new Date().toLocaleDateString("es-AR");
-    const filas = pedidoItems.map((i) => {
+    const comercioNombre = mayoristaActivo?.nombre || "Comercio";
+    const vendedorNombre = (user as any)?.name || "";
+    const clienteNombre = (clienteActivo as any)?.nombre || "";
+
+    const { default: jsPDF } = await import("jspdf");
+    const { default: autoTable } = await import("jspdf-autotable");
+
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+
+    // Membrete
+    doc.setFillColor(5, 150, 105);
+    doc.rect(0, 0, 210, 38, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(20);
+    doc.setFont("helvetica", "bold");
+    doc.text(comercioNombre, 14, 14);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text(`Vendedor: ${vendedorNombre}`, 14, 23);
+    doc.text(`Fecha: ${fecha}`, 14, 30);
+    if (clienteNombre) {
+      doc.text(`Cliente: ${clienteNombre}`, 105, 23);
+    }
+    if (mayoristaActivo?.rubro) {
+      doc.text(mayoristaActivo.rubro, 105, 30);
+    }
+
+    doc.setTextColor(0, 0, 0);
+
+    // Tabla de productos
+    const tableData = pedidoItems.map((i) => {
       const subtotal = i.precioUnitario * i.cantidad * (1 - i.descuentoPct / 100);
       const extras = [
-        i.cantidadRegalo > 0 ? `+${i.cantidadRegalo} bonif.` : "",
+        i.cantidadRegalo > 0 ? `+${i.cantidadRegalo} bon.` : "",
         i.descuentoPct > 0 ? `${i.descuentoPct}% dto` : "",
-      ].filter(Boolean).join(", ");
-      return `<tr>
-        <td>${i.producto.codigo || "---"}</td>
-        <td>${i.producto.descripcion}</td>
-        <td style="text-align:center">${i.cantidad}${i.cantidadRegalo > 0 ? `<br><small style="color:#059669">+${i.cantidadRegalo} bon.</small>` : ""}</td>
-        <td style="text-align:right">$${formatPrice(i.precioUnitario)}</td>
-        <td style="text-align:center;color:#6b7280">${extras || "—"}</td>
-        <td style="text-align:right;font-weight:bold;color:#059669">$${formatPrice(subtotal)}</td>
-      </tr>`;
-    }).join("");
-    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><title>Pedido</title>
-    <style>body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{color:#059669;margin:0 0 4px}
-    .info{color:#6b7280;font-size:13px;margin-bottom:20px}
-    table{width:100%;border-collapse:collapse;font-size:13px}
-    th{background:#059669;color:#fff;padding:8px 10px;text-align:left}
-    td{border-bottom:1px solid #e5e7eb;padding:7px 10px;vertical-align:top}
-    tr:nth-child(even) td{background:#f9fafb}
-    .total{font-size:20px;font-weight:bold;text-align:right;margin-top:16px;color:#059669}
-    @media print{body{padding:12px}}</style></head>
-    <body>
-    <h1>Pedido — ${mayoristaActivo?.nombre || "Comercio"}</h1>
-    <div class="info">Vendedor: ${(user as any)?.name || "—"} &nbsp;|&nbsp; Fecha: ${fecha}</div>
-    <table><thead><tr><th>Código</th><th>Descripción</th><th>Cant.</th><th>P. Unit.</th><th>Bonif./Dto.</th><th>Subtotal</th></tr></thead>
-    <tbody>${filas}</tbody></table>
-    <div class="total">TOTAL: $${formatPrice(total)}</div>
-    </body></html>`;
-    const win = window.open("", "_blank");
-    if (win) { win.document.write(html); win.document.close(); win.focus(); setTimeout(() => win.print(), 400); }
+      ].filter(Boolean).join(" / ");
+      return [
+        i.producto.codigo || "—",
+        i.producto.descripcion,
+        String(i.cantidad),
+        `$${formatPrice(i.precioUnitario)}`,
+        extras || "—",
+        `$${formatPrice(subtotal)}`,
+      ];
+    });
+
+    autoTable(doc, {
+      startY: 45,
+      head: [["Código", "Descripción", "Cant.", "P. Unit.", "Bonif/Dto", "Subtotal"]],
+      body: tableData,
+      styles: { fontSize: 9, cellPadding: 3 },
+      headStyles: { fillColor: [5, 150, 105], textColor: 255, fontStyle: "bold" },
+      alternateRowStyles: { fillColor: [249, 250, 251] },
+      columnStyles: {
+        0: { cellWidth: 20 },
+        1: { cellWidth: 74 },
+        2: { cellWidth: 14, halign: "center" },
+        3: { cellWidth: 25, halign: "right" },
+        4: { cellWidth: 28, halign: "center" },
+        5: { cellWidth: 27, halign: "right", fontStyle: "bold", textColor: [5, 150, 105] },
+      },
+    });
+
+    const finalY: number = (doc as any).lastAutoTable.finalY + 6;
+    if (descuentoGlobal > 0) {
+      doc.setFontSize(10);
+      doc.setTextColor(100, 100, 100);
+      doc.text(`Descuento global: ${descuentoGlobal}%`, 14, finalY);
+    }
+    doc.setFontSize(15);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(5, 150, 105);
+    doc.text(`TOTAL: $${formatPrice(total)}`, 196, finalY + (descuentoGlobal > 0 ? 8 : 0), { align: "right" });
+
+    const fileName = `pedido-${comercioNombre.replace(/\s+/g, "-")}-${fecha.replace(/\//g, "-")}.pdf`;
+
+    // Compartir con Web Share API (mobile) o descargar
+    if (typeof navigator !== "undefined" && navigator.share && typeof (navigator as any).canShare === "function") {
+      const blob = doc.output("blob");
+      const file = new File([blob], fileName, { type: "application/pdf" });
+      if ((navigator as any).canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: `Pedido ${comercioNombre}`,
+            text: `Pedido del ${fecha}${clienteNombre ? ` para ${clienteNombre}` : ""}`,
+          });
+          return;
+        } catch (e: any) {
+          if (e.name !== "AbortError") console.error(e);
+        }
+      }
+    }
+    doc.save(fileName);
   };
 
   const handleExcelPedido = async () => {
     const XLSX = await import("xlsx");
+    const fecha = new Date().toLocaleDateString("es-AR");
+    const comercioNombre = mayoristaActivo?.nombre || "comercio";
+    const clienteNombre = (clienteActivo as any)?.nombre || "";
+    const vendedorNombre = (user as any)?.name || "";
+
+    // Encabezado informativo
+    const info = [
+      { "Código": "Comercio:", "Descripción": comercioNombre, "Cantidad": "", "Bonif. (unid.)": "", "Precio unitario": "", "Descuento %": "", "Subtotal": "" },
+      { "Código": "Vendedor:", "Descripción": vendedorNombre, "Cantidad": "", "Bonif. (unid.)": "", "Precio unitario": "", "Descuento %": "", "Subtotal": "" },
+      ...(clienteNombre ? [{ "Código": "Cliente:", "Descripción": clienteNombre, "Cantidad": "", "Bonif. (unid.)": "", "Precio unitario": "", "Descuento %": "", "Subtotal": "" }] : []),
+      { "Código": "Fecha:", "Descripción": fecha, "Cantidad": "", "Bonif. (unid.)": "", "Precio unitario": "", "Descuento %": "", "Subtotal": "" },
+      { "Código": "", "Descripción": "", "Cantidad": "", "Bonif. (unid.)": "", "Precio unitario": "", "Descuento %": "", "Subtotal": "" },
+    ];
     const data = pedidoItems.map((i) => ({
       "Código": i.producto.codigo || "",
       "Descripción": i.producto.descripcion,
@@ -1167,15 +1258,34 @@ function PedidoView() {
       "Subtotal": parseFloat((i.precioUnitario * i.cantidad * (1 - i.descuentoPct / 100)).toFixed(2)),
     }));
     data.push({ "Código": "", "Descripción": "TOTAL", "Cantidad": 0, "Bonif. (unid.)": 0, "Precio unitario": 0, "Descuento %": 0, "Subtotal": parseFloat(total.toFixed(2)) });
-    const ws = XLSX.utils.json_to_sheet(data);
+
+    const ws = XLSX.utils.json_to_sheet([...info, ...data]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Pedido");
-    XLSX.writeFile(wb, `pedido-${(mayoristaActivo?.nombre || "comercio").replace(/\s+/g, "-")}-${new Date().toLocaleDateString("es-AR").replace(/\//g, "-")}.xlsx`);
+
+    const fileName = `pedido-${comercioNombre.replace(/\s+/g, "-")}-${fecha.replace(/\//g, "-")}.xlsx`;
+
+    // Compartir con Web Share API (mobile) o descargar
+    if (typeof navigator !== "undefined" && navigator.share && typeof (navigator as any).canShare === "function") {
+      const wbOut = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+      const blob = new Blob([wbOut], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const file = new File([blob], fileName, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      if ((navigator as any).canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: `Pedido ${comercioNombre}` });
+          return;
+        } catch (e: any) {
+          if (e.name !== "AbortError") console.error(e);
+        }
+      }
+    }
+    XLSX.writeFile(wb, fileName);
   };
 
   if (!pedidoItems.length) {
     return (
       <div className="animate-fade-in-up space-y-4">
+        <BackButton />
         <h2 className="text-2xl font-bold">Mi Pedido</h2>
         <div className="text-center py-16">
           <ShoppingCart className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-30" />
@@ -1191,6 +1301,7 @@ function PedidoView() {
 
   return (
     <div className="animate-fade-in-up space-y-4">
+      <BackButton />
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold">Mi Pedido</h2>
@@ -1327,6 +1438,7 @@ function ClientesView() {
 
   return (
     <div className="animate-fade-in-up space-y-6">
+      <BackButton />
       <h2 className="text-2xl font-bold">Mis Clientes</h2>
 
       <div className="p-5 rounded-2xl border bg-card space-y-3">
@@ -1384,6 +1496,7 @@ function HistorialView() {
 
   return (
     <div className="animate-fade-in-up space-y-6">
+      <BackButton />
       <h2 className="text-2xl font-bold">Historial de Pedidos</h2>
 
       {pedidos.length === 0 ? (
@@ -1528,6 +1641,7 @@ function MaestroView() {
 
   return (
     <div className="animate-fade-in-up space-y-4">
+      <BackButton />
       <div>
         <h2 className="text-2xl font-bold">Maestro de Productos</h2>
         <p className="text-muted-foreground mt-1">{mayoristaActivo.nombre} · {productos.length} productos</p>
