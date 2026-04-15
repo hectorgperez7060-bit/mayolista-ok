@@ -215,7 +215,7 @@ function AppHeader() {
     { id: "buscar", label: "Buscar", icon: Search },
     { id: "pedido", label: "Pedido", icon: ShoppingCart },
     { id: "maestro", label: "Maestro", icon: Layers },
-    { id: "mayorista", label: "Mayorista", icon: Truck },
+    { id: "mayorista", label: "Comercio", icon: Truck },
     { id: "clientes", label: "Clientes", icon: Users },
     { id: "historial", label: "Historial", icon: History },
   ];
@@ -365,7 +365,7 @@ function DashboardView() {
           <p className="text-emerald-100 mt-1">
             {mayoristaActivo
               ? `${mayoristaActivo.rubro} · ${totalItems || mayoristaActivo._count?.productos || 0} productos cargados`
-              : "Configurá tu mayorista para empezar"}
+              : "Configurá tu comercio para empezar"}
           </p>
           {!mayoristaActivo && (
             <button
@@ -373,7 +373,7 @@ function DashboardView() {
               className="mt-4 px-6 py-3 bg-white text-emerald-700 font-semibold rounded-xl hover:bg-emerald-50 transition-colors flex items-center gap-2 shadow-lg text-base"
             >
               <Store className="w-5 h-5" />
-              Configurar mayorista
+              Configurar comercio
             </button>
           )}
         </div>
@@ -391,7 +391,7 @@ function DashboardView() {
           </div>
           <h3 className="text-xl font-bold mb-2">¿Primera vez acá?</h3>
           <p className="text-muted-foreground mb-6">
-            Para empezar a armar pedidos, necesitás configurar tu primer mayorista.
+            Para empezar a armar pedidos, necesitás configurar tu primer comercio.
             Elegí un nombre, el rubro, y subí tu lista de precios.
           </p>
           <button
@@ -399,10 +399,10 @@ function DashboardView() {
             className="inline-flex items-center gap-3 px-8 py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold text-lg shadow-xl hover:from-emerald-600 hover:to-emerald-700 hover:scale-[1.02] active:scale-[0.98] transition-all"
           >
             <Store className="w-6 h-6" />
-            Configurar mi primer mayorista
+            Configurar mi primer comercio
           </button>
           <p className="text-xs text-muted-foreground mt-4">
-            Subí tu lista de precios en Excel o CSV · Takes less than 2 minutes
+            Subí tu lista de precios en Excel o CSV · Lleva menos de 2 minutos
           </p>
         </motion.div>
       )}
@@ -470,7 +470,7 @@ function DashboardView() {
                 </div>
                 <div className="flex items-center justify-between flex-1">
                   <div>
-                    <p className="font-medium text-sm">Cambiar mayorista</p>
+                    <p className="font-medium text-sm">Cambiar comercio</p>
                     <p className="text-xs text-muted-foreground">Cargá otra lista</p>
                   </div>
                   <ChevronRight className="w-4 h-4 text-muted-foreground" />
@@ -552,7 +552,7 @@ function MayoristaView() {
       if (res.ok) {
         const data = await res.json();
         setCurrentMayoristaId(data.id);
-        toast.success(`Mayorista "${nombre}" creado. Ahora cargá tu lista.`);
+        toast.success(`Comercio "${nombre}" creado. Ahora cargá tu lista.`);
       } else {
         toast.error("Error al crear mayorista");
       }
@@ -718,16 +718,16 @@ function MayoristaView() {
   return (
     <div className="animate-fade-in-up space-y-6">
       <div>
-        <h2 className="text-2xl font-bold">Configurar Mayorista</h2>
+        <h2 className="text-2xl font-bold">Configurar Comercio</h2>
         <p className="text-muted-foreground mt-1">
-          Elegí un mayorista existente o creá uno nuevo
+          Elegí un comercio existente o creá uno nuevo
         </p>
       </div>
 
       {/* Existing mayoristas */}
       {existingMayoristas.length > 0 && (
         <div className="space-y-2">
-          <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Mayoristas existentes</h3>
+          <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Comercios existentes</h3>
           {existingMayoristas.map((m: any) => (
             <button
               key={m.id}
@@ -756,10 +756,10 @@ function MayoristaView() {
       {/* Create new */}
       {!currentMayoristaId ? (
         <div className="space-y-4 p-6 rounded-2xl border bg-card">
-          <h3 className="font-semibold">Crear nuevo mayorista</h3>
+          <h3 className="font-semibold">Crear nuevo comercio</h3>
           <div className="space-y-4">
             <div>
-              <label className="text-sm font-medium mb-1 block">Nombre del mayorista</label>
+              <label className="text-sm font-medium mb-1 block">Nombre del comercio</label>
               <input
                 type="text"
                 placeholder="Ej: Distribuidora Tomás"
@@ -791,7 +791,7 @@ function MayoristaView() {
               disabled={loading || !nombre.trim() || !rubro}
               className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold shadow-lg hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-base"
             >
-              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Plus className="w-5 h-5" /> Crear mayorista</>}
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Plus className="w-5 h-5" /> Crear comercio</>}
             </button>
           </div>
         </div>
@@ -1619,10 +1619,10 @@ function MaestroView() {
     return (
       <div className="animate-fade-in-up text-center py-20">
         <Layers className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-        <h3 className="text-xl font-semibold mb-2">Sin mayorista activo</h3>
-        <p className="text-muted-foreground mb-6">Primero configurá un mayorista</p>
+        <h3 className="text-xl font-semibold mb-2">Sin comercio activo</h3>
+        <p className="text-muted-foreground mb-6">Primero configurá un comercio</p>
         <button onClick={() => setCurrentView("mayorista")} className="px-6 py-3 rounded-xl bg-emerald-500 text-white font-semibold hover:bg-emerald-600 transition-colors">
-          Ir a mayorista
+          Ir a Comercios
         </button>
       </div>
     );
