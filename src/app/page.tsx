@@ -924,7 +924,7 @@ function BuscarView() {
     const cleanQ = parsed.cleanQuery || query.trim();
     const nQ = normalizeText(cleanQ);
     if (nQ.length < 2 || !productos.length) return [];
-    const palabras = nQ.split(/\s+/).filter((w) => w.length >= 2);
+    const palabras = nQ.split(/\s+/).filter((w) => w.length >= 2 && !/^\d+$/.test(w));
     if (!palabras.length) return [];
 
     const nivel1 = productos.filter((p) => {
