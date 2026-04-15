@@ -63,3 +63,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Error interno del servidor" }, { status: 500 });
   }
 }
+
+// DELETE - Borrar mayorista (y todos sus pedidos/productos)
+export async function DELETE(req: NextRequest) {
+  try {
+    const userId = getUserId(req);
+    if (!userId) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+    }
+
+    const url = new URL(req.url);
+    const id = url.searchParams.get("id");
+    if (!id) {
+      return NextResponse.json({ error: "Falta el ID del comercio" }, { status: 400 });
+    }
+
+    // Verificar que el comercio pertenece al usuario
+    const mayorista = await db.mayorista.findFirst({ where: { id, userId } });
+    if (!mayorista) {
+      return NextResponse.json({ error: "Comercio no encontrado" }, { status: 404 });
+    }
+
+    // Borrar pedidos asociados primero (foreign key)
+    await db.pedido.deleteMany({ where: { mayoristaId: id } });
+
+    // Borrar mayorista (cascadea productos automáticamente)
+    await db.mayorista.delete({ where: { id } });
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    console.error("Error al borrar mayorista:", error);
+    return NextResponse.json({ error: "Error interno del servidor" }, { status: 500 });
+  }
+}

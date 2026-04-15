@@ -14,6 +14,10 @@ interface MayolistaState {
   mayoristaActivo: Mayorista | null;
   setMayoristaActivo: (m: Mayorista | null) => void;
 
+  // Logo del comercio activo (base64, guardado en localStorage)
+  logo: string | null;
+  setLogo: (logo: string | null) => void;
+
   // Productos del mayorista activo (para búsqueda)
   productos: Producto[];
   setProductos: (p: Producto[]) => void;
@@ -49,8 +53,16 @@ export const useMayolistaStore = create<MayolistaState>((set, get) => ({
         localStorage.removeItem("mayolista_mayorista_id");
       }
     }
-    // Don't clear productos and pedidoItems when restoring mayorista!
     set({ mayoristaActivo: m });
+  },
+
+  logo: null,
+  setLogo: (logo) => {
+    if (typeof window !== "undefined") {
+      if (logo) localStorage.setItem("mayolista_logo", logo);
+      else localStorage.removeItem("mayolista_logo");
+    }
+    set({ logo });
   },
 
   productos: [],

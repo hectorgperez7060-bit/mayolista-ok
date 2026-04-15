@@ -228,7 +228,7 @@ function LoginView() {
 
 // ==================== HEADER ====================
 function AppHeader() {
-  const { user, currentView, setCurrentView, mayoristaActivo } = useMayolistaStore();
+  const { user, currentView, setCurrentView, mayoristaActivo, logo } = useMayolistaStore();
   const [menuOpen, setMenuOpen] = useState(false);
 
   const handleLogout = () => {
@@ -253,15 +253,28 @@ function AppHeader() {
           onClick={() => setCurrentView("buscar")}
           className="flex items-center gap-2.5"
         >
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-md">
-            <ClipboardList className="w-4 h-4 text-white" />
-          </div>
+          {logo ? (
+            <img src={logo} alt={mayoristaActivo?.nombre || "Logo"} className="w-8 h-8 rounded-lg object-cover shadow-md shrink-0" />
+          ) : (
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-md shrink-0">
+              <ClipboardList className="w-4 h-4 text-white" />
+            </div>
+          )}
           <div className="text-left">
-            <h1 className="text-sm font-bold leading-tight text-gradient">Mayolista-OK</h1>
-            {mayoristaActivo && (
-              <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium leading-tight truncate max-w-[160px]">
-                {mayoristaActivo.nombre}
-              </p>
+            {logo && mayoristaActivo ? (
+              <>
+                <h1 className="text-sm font-bold leading-tight">{mayoristaActivo.nombre}</h1>
+                <p className="text-[10px] text-muted-foreground leading-tight">Mayolista-OK</p>
+              </>
+            ) : (
+              <>
+                <h1 className="text-sm font-bold leading-tight text-gradient">Mayolista-OK</h1>
+                {mayoristaActivo && (
+                  <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium leading-tight truncate max-w-[160px]">
+                    {mayoristaActivo.nombre}
+                  </p>
+                )}
+              </>
             )}
           </div>
         </button>
@@ -527,14 +540,48 @@ function DashboardView() {
 
 // ==================== MAYORISTA VIEW ====================
 function MayoristaView() {
-  const { setMayoristaActivo, setCurrentView, setProductos, mayoristaActivo } = useMayolistaStore();
+  const { setMayoristaActivo, setCurrentView, setProductos, mayoristaActivo, logo, setLogo } = useMayolistaStore();
   const [nombre, setNombre] = useState("");
   const [rubro, setRubro] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
+  const [deletingComercio, setDeletingComercio] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.size > 2 * 1024 * 1024) { toast.error("El logo no puede superar 2MB"); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const base64 = ev.target?.result as string;
+      setLogo(base64);
+      toast.success("Logo guardado");
+    };
+    reader.readAsDataURL(f);
+  };
+
+  const handleDeleteComercio = async () => {
+    if (!mayoristaActivo) return;
+    if (!confirm(`¿Borrar el comercio "${mayoristaActivo.nombre}" y TODOS sus datos (productos, pedidos)? Esta acción no se puede deshacer.`)) return;
+    setDeletingComercio(true);
+    try {
+      const res = await fetch(`/api/mayoristas?id=${mayoristaActivo.id}`, { method: "DELETE", headers: authHeaders() });
+      if (res.ok) {
+        setMayoristaActivo(null);
+        setProductos([]);
+        setLogo(null);
+        toast.success("Comercio eliminado");
+        setCurrentView("mayorista");
+      } else {
+        toast.error("Error al eliminar el comercio");
+      }
+    } catch { toast.error("Error de conexión"); }
+    finally { setDeletingComercio(false); }
+  };
 
   const rubros = [
     "Alimentos", "Bebidas", "Kiosco", "Limpieza", "Ferretería",
@@ -695,14 +742,35 @@ function MayoristaView() {
           <p className="text-muted-foreground mt-1">Actualizá los precios o gestioná tus productos</p>
         </div>
 
+        {/* Info comercio + Logo */}
         <div className="flex items-center gap-4 p-5 rounded-2xl border bg-card">
-          <div className="w-12 h-12 rounded-xl bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center shrink-0">
-            <Truck className="w-6 h-6 text-emerald-600" />
+          <div
+            onClick={() => logoInputRef.current?.click()}
+            className="relative w-14 h-14 rounded-xl overflow-hidden cursor-pointer shrink-0 group"
+            title="Tocá para cambiar el logo"
+          >
+            {logo ? (
+              <img src={logo} alt="Logo" className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
+                <Truck className="w-7 h-7 text-emerald-600" />
+              </div>
+            )}
+            <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 group-active:opacity-100 flex items-center justify-center transition-opacity">
+              <Upload className="w-5 h-5 text-white" />
+            </div>
+            <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
           </div>
-          <div>
-            <p className="font-bold text-lg">{mayoristaActivo.nombre}</p>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-lg truncate">{mayoristaActivo.nombre}</p>
             <p className="text-sm text-muted-foreground">{mayoristaActivo.rubro} · {mayoristaActivo._count?.productos || 0} productos</p>
+            <p className="text-xs text-emerald-600 mt-0.5">Tocá la imagen para subir logo</p>
           </div>
+          {logo && (
+            <button onClick={() => setLogo(null)} className="text-xs text-muted-foreground hover:text-destructive transition-colors shrink-0" title="Quitar logo">
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
 
         <div className="space-y-4 p-6 rounded-2xl border bg-card">
@@ -740,6 +808,25 @@ function MayoristaView() {
             </div>
           </div>
         </div>
+
+        {/* Borrar el comercio completo */}
+        <div className="p-4 rounded-2xl border border-destructive/50 bg-destructive/5">
+          <div className="flex items-start gap-3">
+            <Trash2 className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <h3 className="font-semibold text-sm text-destructive">Borrar este comercio</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">Borra el comercio, todos sus productos y pedidos. Arrancás desde cero.</p>
+              <button
+                onClick={handleDeleteComercio}
+                disabled={deletingComercio}
+                className="mt-3 px-4 py-2 rounded-lg bg-destructive text-destructive-foreground text-sm font-semibold hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {deletingComercio ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                Borrar comercio completo
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -770,6 +857,39 @@ function MayoristaView() {
                     : "bg-muted text-muted-foreground hover:bg-muted/80"
                 }`}>{r}</button>
             ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Logo (opcional) en modo crear */}
+      <div className="p-5 rounded-2xl border bg-card space-y-3">
+        <h3 className="font-semibold">
+          Logo del comercio{" "}
+          <span className="text-muted-foreground font-normal text-sm">(opcional)</span>
+        </h3>
+        <div className="flex items-center gap-4">
+          <div
+            onClick={() => logoInputRef.current?.click()}
+            className="relative w-16 h-16 rounded-xl overflow-hidden cursor-pointer shrink-0 group border-2 border-dashed border-muted-foreground/25 hover:border-emerald-400 transition-colors"
+          >
+            {logo ? (
+              <img src={logo} alt="Logo" className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center bg-muted">
+                <Upload className="w-6 h-6 text-muted-foreground" />
+              </div>
+            )}
+            <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+          </div>
+          <div className="text-sm text-muted-foreground">
+            {logo ? (
+              <div className="space-y-1">
+                <p className="text-emerald-600 font-medium">Logo cargado</p>
+                <button onClick={() => setLogo(null)} className="text-xs text-destructive hover:underline">Quitar logo</button>
+              </div>
+            ) : (
+              <p>Tocá para subir el logo de tu comercio. Aparecerá en el encabezado y en los PDFs.</p>
+            )}
           </div>
         </div>
       </div>
@@ -1085,7 +1205,7 @@ function BuscarView() {
 
 // ==================== PEDIDO VIEW ====================
 function PedidoView() {
-  const { pedidoItems, removeItem, updateItem, clearPedido, getTotalPedido, setCurrentView, mayoristaActivo, user, clienteActivo, descuentoGlobal } = useMayolistaStore();
+  const { pedidoItems, removeItem, updateItem, clearPedido, getTotalPedido, setCurrentView, mayoristaActivo, user, clienteActivo, descuentoGlobal, logo } = useMayolistaStore();
   const [sending, setSending] = useState(false);
   const total = getTotalPedido();
 
@@ -1148,20 +1268,25 @@ function PedidoView() {
 
     // Membrete
     doc.setFillColor(5, 150, 105);
-    doc.rect(0, 0, 210, 38, "F");
+    doc.rect(0, 0, 210, 42, "F");
     doc.setTextColor(255, 255, 255);
+
+    // Logo (si existe)
+    const textStartX = logo ? 48 : 14;
+    if (logo) {
+      try { doc.addImage(logo, "PNG", 8, 5, 32, 32); } catch { /* ignore si el formato no es soportado */ }
+    }
+
     doc.setFontSize(20);
     doc.setFont("helvetica", "bold");
-    doc.text(comercioNombre, 14, 14);
+    doc.text(comercioNombre, textStartX, 14);
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
-    doc.text(`Vendedor: ${vendedorNombre}`, 14, 23);
-    doc.text(`Fecha: ${fecha}`, 14, 30);
+    if (mayoristaActivo?.rubro) doc.text(mayoristaActivo.rubro, textStartX, 22);
+    doc.text(`Vendedor: ${vendedorNombre}`, textStartX, 30);
+    doc.text(`Fecha: ${fecha}`, textStartX, 37);
     if (clienteNombre) {
-      doc.text(`Cliente: ${clienteNombre}`, 105, 23);
-    }
-    if (mayoristaActivo?.rubro) {
-      doc.text(mayoristaActivo.rubro, 105, 30);
+      doc.text(`Cliente: ${clienteNombre}`, 130, 30);
     }
 
     doc.setTextColor(0, 0, 0);
@@ -1184,7 +1309,7 @@ function PedidoView() {
     });
 
     autoTable(doc, {
-      startY: 45,
+      startY: 50,
       head: [["Código", "Descripción", "Cant.", "P. Unit.", "Bonif/Dto", "Subtotal"]],
       body: tableData,
       styles: { fontSize: 9, cellPadding: 3 },
@@ -1789,7 +1914,7 @@ function MaestroView() {
 
 // ==================== MAIN APP ====================
 export default function Home() {
-  const { currentView, user, setUser, setCurrentView, setMayoristaActivo, setProductos } = useMayolistaStore();
+  const { currentView, user, setUser, setCurrentView, setMayoristaActivo, setProductos, setLogo } = useMayolistaStore();
   const [initialized, setInitialized] = useState(false);
 
   // Un solo efecto que corre UNA VEZ al montar: restaura usuario + comercio
@@ -1802,6 +1927,10 @@ export default function Home() {
 
         const savedUser = JSON.parse(savedUserStr);
         setUser(savedUser);
+
+        // Restaurar logo si existe
+        const savedLogo = localStorage.getItem("mayolista_logo");
+        if (savedLogo) setLogo(savedLogo);
 
         try {
           const res = await fetch("/api/mayoristas", { headers: authHeaders() });
