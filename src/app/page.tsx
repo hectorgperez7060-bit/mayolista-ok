@@ -81,7 +81,7 @@ function parseQuantity(q: string): { cleanQuery: string; cantidad: number } {
 
 // ==================== LOGIN VIEW ====================
 function LoginView() {
-  const { setUser, setCurrentView } = useMayolistaStore();
+  const { setUser, setCurrentView, setMayoristaActivo, setProductos } = useMayolistaStore();
   const [nombre, setNombre] = useState("");
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
@@ -104,7 +104,25 @@ function LoginView() {
         const data = await res.json();
         localStorage.setItem("mayolista_user", JSON.stringify(data.user));
         setUser(data.user);
-        setCurrentView("dashboard");
+        // Auto-cargar comercio y decidir a dónde ir
+        try {
+          const mRes = await fetch("/api/mayoristas", { headers: { "x-user-id": data.user.id } });
+          if (mRes.ok) {
+            const ms = await mRes.json();
+            if (ms.length > 0) {
+              setMayoristaActivo(ms[0]);
+              const pRes = await fetch(`/api/productos?mayoristaId=${ms[0].id}`, { headers: { "x-user-id": data.user.id } });
+              if (pRes.ok) setProductos(await pRes.json());
+              setCurrentView("buscar");
+            } else {
+              setCurrentView("mayorista");
+            }
+          } else {
+            setCurrentView("mayorista");
+          }
+        } catch {
+          setCurrentView("mayorista");
+        }
       } else {
         const body = await res.text().catch(() => "");
         setError(`Error al ingresar (${res.status})${body ? ": " + body : ""}`);
@@ -205,11 +223,10 @@ function AppHeader() {
   };
 
   const navItems = [
-    { id: "dashboard", label: "Inicio", icon: Store },
     { id: "buscar", label: "Buscar", icon: Search },
     { id: "pedido", label: "Pedido", icon: ShoppingCart },
     { id: "maestro", label: "Maestro", icon: Layers },
-    { id: "mayorista", label: "Comercio", icon: Truck },
+    { id: "mayorista", label: "Mi Lista", icon: Truck },
     { id: "clientes", label: "Clientes", icon: Users },
     { id: "historial", label: "Historial", icon: History },
   ];
@@ -218,7 +235,7 @@ function AppHeader() {
     <header className="sticky top-0 z-50 glass border-b">
       <div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
         <button
-          onClick={() => setCurrentView("dashboard")}
+          onClick={() => setCurrentView("buscar")}
           className="flex items-center gap-2.5"
         >
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-md">
@@ -502,8 +519,6 @@ function MayoristaView() {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
-  const [currentMayoristaId, setCurrentMayoristaId] = useState("");
-  const [existingMayoristas, setExistingMayoristas] = useState<any[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const rubros = [
@@ -512,353 +527,189 @@ function MayoristaView() {
     "Pinturería", "Plomería", "Electricidad", "Otros",
   ];
 
-  // Load existing mayoristas on mount
-  useEffect(() => {
-    async function load() {
-      try {
-        const res = await fetch("/api/mayoristas", { headers: authHeaders() });
-        if (res.ok) {
-          const data = await res.json();
-          setExistingMayoristas(data);
-        }
-      } catch { /* ignore */ }
-    }
-    load();
-  }, []);
-
-  const handleSelectExisting = async (m: any) => {
-    setMayoristaActivo(m);
-    setCurrentView("buscar");
-  };
-
-  const handleCreateMayorista = async () => {
-    if (!nombre.trim() || !rubro) {
-      toast.error("Completá el nombre y el rubro");
-      return;
-    }
-    setLoading(true);
-    try {
-      const res = await fetch("/api/mayoristas", {
-        method: "POST",
-        headers: authHeaders(),
-        body: JSON.stringify({ nombre: nombre.trim(), rubro }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setCurrentMayoristaId(data.id);
-        toast.success(`Comercio "${nombre}" creado. Ahora cargá tu lista.`);
-      } else {
-        toast.error("Error al crear mayorista");
-      }
-    } catch {
-      toast.error("Error de conexión");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleFileUpload = async () => {
-    if (!file || !currentMayoristaId) {
-      toast.error("Primero creá el mayorista y elegí un archivo");
-      return;
-    }
-
+  // Subir productos a un mayoristaId dado, devuelve la cantidad cargada
+  const uploadProductsTo = async (mayoristaId: string): Promise<number> => {
+    if (!file) return 0;
     setUploading(true);
     setUploadProgress("Leyendo archivo...");
-
     try {
       const XLSX = await import("xlsx");
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
-
-      if (rows.length === 0) {
-        toast.error("El archivo está vacío");
-        setUploading(false);
-        return;
-      }
+      if (rows.length === 0) { toast.error("El archivo está vacío"); return 0; }
 
       setUploadProgress(`Procesando ${rows.length} filas...`);
-
       const keys = Object.keys(rows[0]);
       const products: { codigo: string; descripcion: string; precio: number }[] = [];
 
       for (const raw of rows) {
-        // Find description = column with longest text
         let descKey: string | null = null;
         let longestTextLen = 0;
         for (const k of keys) {
           const val = String(raw[k] || "").trim();
-          if (val.length > longestTextLen && val.length > 3) {
-            longestTextLen = val.length;
-            descKey = k;
-          }
+          if (val.length > longestTextLen && val.length > 3) { longestTextLen = val.length; descKey = k; }
         }
-
-        // Find numeric columns
         const numericCols: { key: string; value: number; name: string }[] = [];
         for (const k of keys) {
           if (k === descKey) continue;
-          if (typeof raw[k] === "number" && raw[k] > 0) {
-            numericCols.push({ key: k, value: raw[k], name: k.toLowerCase() });
-          }
+          if (typeof raw[k] === "number" && raw[k] > 0) numericCols.push({ key: k, value: raw[k], name: k.toLowerCase() });
         }
-
-        // Find precio - prefer "$ unit"
         let precioKey: string | null = null;
         for (const col of numericCols) {
-          if (col.name.includes("$ unit") || col.name.includes("preciounitario")) {
-            precioKey = col.key;
-            break;
-          }
+          if (col.name.includes("$ unit") || col.name.includes("preciounitario")) { precioKey = col.key; break; }
         }
-
-        // Find codigo - remaining numeric
         let codigoKey: string | null = null;
         for (const col of numericCols) {
-          if (col.key !== precioKey && !codigoKey) {
-            codigoKey = col.key;
-          }
+          if (col.key !== precioKey && !codigoKey) codigoKey = col.key;
         }
-
         const codigo = codigoKey ? String(raw[codigoKey] || "").trim() : "";
         const descripcion = descKey ? String(raw[descKey] || "").trim() : "";
         const precio = precioKey ? (Number(raw[precioKey]) || 0) : 0;
-
         if (!descripcion && !codigo) continue;
         if (!codigo && precio === 0 && descripcion.includes(";")) continue;
-
         products.push({ codigo, descripcion: descripcion || codigo, precio });
       }
 
-      if (products.length === 0) {
-        toast.error("No se encontraron productos en el archivo");
-        setUploading(false);
-        return;
-      }
+      if (products.length === 0) { toast.error("No se encontraron productos en el archivo"); return 0; }
 
-      // Send in chunks
       const CHUNK_SIZE = 300;
       const totalChunks = Math.ceil(products.length / CHUNK_SIZE);
       let totalLoaded = 0;
-
       setUploadProgress(`Enviando lote 1 de ${totalChunks}...`);
 
-      const firstChunk = products.slice(0, CHUNK_SIZE);
       const firstRes = await fetch("/api/productos", {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ mayoristaId: currentMayoristaId, productos: firstChunk, replace: true }),
+        body: JSON.stringify({ mayoristaId, productos: products.slice(0, CHUNK_SIZE), replace: true }),
       });
-
-      if (!firstRes.ok) {
-        const err = await firstRes.text();
-        toast.error("Error: " + err);
-        setUploading(false);
-        setUploadProgress("");
-        return;
-      }
-
-      totalLoaded += firstChunk.length;
+      if (!firstRes.ok) { toast.error("Error al subir lista"); return 0; }
+      totalLoaded += Math.min(CHUNK_SIZE, products.length);
       setUploadProgress(`${totalLoaded} de ${products.length} productos...`);
 
       for (let i = 1; i < totalChunks; i++) {
         const chunk = products.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
         setUploadProgress(`Enviando lote ${i + 1} de ${totalChunks}...`);
-
-        const chunkRes = await fetch("/api/productos", {
+        const r = await fetch("/api/productos", {
           method: "POST",
           headers: authHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify({ mayoristaId: currentMayoristaId, productos: chunk, replace: false }),
+          body: JSON.stringify({ mayoristaId, productos: chunk, replace: false }),
         });
-
-        if (!chunkRes.ok) {
-          toast.error(`Error en lote ${i + 1}`);
-          break;
-        }
+        if (!r.ok) break;
         totalLoaded += chunk.length;
         setUploadProgress(`${totalLoaded} de ${products.length} productos...`);
       }
+      return totalLoaded;
+    } catch (e) { console.error(e); toast.error("Error al procesar el archivo"); return 0; }
+    finally { setUploading(false); setUploadProgress(""); }
+  };
 
-      toast.success(`${totalLoaded} productos cargados OK`);
-      setUploadProgress(`¡${totalLoaded} productos listos!`);
-
-      // Set as active mayorista and load products
-      const mayoristaRes = await fetch("/api/mayoristas", { headers: authHeaders() });
-      if (mayoristaRes.ok) {
-        const mayoristas = await mayoristaRes.json();
-        const active = mayoristas.find((m: any) => m.id === currentMayoristaId);
-        if (active) {
-          setMayoristaActivo(active);
-          // Load products into store
-          const prodRes = await fetch(`/api/productos?mayoristaId=${currentMayoristaId}`, { headers: authHeaders() });
-          if (prodRes.ok) {
-            const prods = await prodRes.json();
-            setProductos(prods);
-          }
-          setCurrentView("buscar");
-        }
+  // MODO CREAR: crear comercio (+ opcionalmente subir lista) y entrar
+  const handleCreate = async () => {
+    if (!nombre.trim() || !rubro) { toast.error("Completá el nombre y el rubro"); return; }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/mayoristas", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ nombre: nombre.trim(), rubro }),
+      });
+      if (!res.ok) { toast.error("Error al crear comercio"); return; }
+      const m = await res.json();
+      let totalLoaded = 0;
+      if (file) totalLoaded = await uploadProductsTo(m.id);
+      setMayoristaActivo(m);
+      if (totalLoaded > 0) {
+        const pRes = await fetch(`/api/productos?mayoristaId=${m.id}`, { headers: authHeaders() });
+        if (pRes.ok) setProductos(await pRes.json());
+        toast.success(`Comercio creado con ${totalLoaded} productos`);
+      } else {
+        toast.success(`Comercio "${nombre.trim()}" creado`);
       }
-    } catch (error) {
-      console.error(error);
-      toast.error("Error al procesar el archivo");
-    } finally {
-      setUploading(false);
-      setUploadProgress("");
+      setCurrentView("buscar");
+    } catch { toast.error("Error de conexión"); }
+    finally { setLoading(false); }
+  };
+
+  // MODO EDITAR: reemplazar lista del comercio existente
+  const handleUpdateList = async () => {
+    if (!file || !mayoristaActivo) { toast.error("Elegí un archivo primero"); return; }
+    const totalLoaded = await uploadProductsTo(mayoristaActivo.id);
+    if (totalLoaded > 0) {
+      const pRes = await fetch(`/api/productos?mayoristaId=${mayoristaActivo.id}`, { headers: authHeaders() });
+      if (pRes.ok) setProductos(await pRes.json());
+      setFile(null);
+      toast.success(`${totalLoaded} productos actualizados`);
     }
   };
 
-  return (
-    <div className="animate-fade-in-up space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Configurar Comercio</h2>
-        <p className="text-muted-foreground mt-1">
-          Elegí un comercio existente o creá uno nuevo
-        </p>
-      </div>
-
-      {/* Existing mayoristas */}
-      {existingMayoristas.length > 0 && (
+  const filePicker = (
+    <div
+      onClick={() => fileInputRef.current?.click()}
+      className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all hover:border-emerald-400 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20 ${
+        file ? "border-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20" : "border-muted-foreground/25"
+      }`}
+    >
+      <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) setFile(f); }} className="hidden" />
+      {file ? (
         <div className="space-y-2">
-          <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">Comercios existentes</h3>
-          {existingMayoristas.map((m: any) => (
-            <button
-              key={m.id}
-              onClick={() => handleSelectExisting(m)}
-              className={`w-full flex items-center justify-between p-4 rounded-xl border bg-card hover:border-emerald-300 dark:hover:border-emerald-700 transition-all ${
-                m.id === (mayoristaActivo?.id) ? "border-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20" : ""
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
-                  <Truck className="w-5 h-5 text-emerald-600" />
-                </div>
-                <div className="text-left">
-                  <p className="font-medium text-sm">{m.nombre}</p>
-                  <p className="text-xs text-muted-foreground">{m.rubro} · {m._count?.productos || 0} productos</p>
-                </div>
-              </div>
-              {m.id === mayoristaActivo?.id && (
-                <Check className="w-5 h-5 text-emerald-600" />
-              )}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Create new */}
-      {!currentMayoristaId ? (
-        <div className="space-y-4 p-6 rounded-2xl border bg-card">
-          <h3 className="font-semibold">Crear nuevo comercio</h3>
-          <div className="space-y-4">
-            <div>
-              <label className="text-sm font-medium mb-1 block">Nombre del comercio</label>
-              <input
-                type="text"
-                placeholder="Ej: Distribuidora Tomás"
-                value={nombre}
-                onChange={(e) => setNombre(e.target.value)}
-                className="w-full px-4 py-3 rounded-xl border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-2 block">Rubro</label>
-              <div className="flex flex-wrap gap-2">
-                {rubros.map((r) => (
-                  <button
-                    key={r}
-                    onClick={() => setRubro(r)}
-                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                      rubro === r
-                        ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700"
-                        : "bg-muted text-muted-foreground hover:bg-muted/80"
-                    }`}
-                  >
-                    {r}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <button
-              onClick={handleCreateMayorista}
-              disabled={loading || !nombre.trim() || !rubro}
-              className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold shadow-lg hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-base"
-            >
-              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Plus className="w-5 h-5" /> Crear comercio</>}
-            </button>
-          </div>
+          <FileSpreadsheet className="w-10 h-10 text-emerald-500 mx-auto" />
+          <p className="font-medium text-sm">{file.name}</p>
+          <p className="text-xs text-muted-foreground">{(file.size / 1024).toFixed(1)} KB</p>
+          <button onClick={(e) => { e.stopPropagation(); setFile(null); }} className="text-xs text-destructive hover:underline">Quitar archivo</button>
         </div>
       ) : (
-        <div className="space-y-4 p-6 rounded-2xl border bg-card">
-          <h3 className="font-semibold">Subir lista de precios</h3>
-          <div className="text-sm text-muted-foreground mb-4">
-            Subí tu archivo Excel o CSV. El sistema detecta automáticamente las columnas de código, descripción y precio.
-          </div>
-
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all hover:border-emerald-400 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/20 ${
-              file ? "border-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20" : "border-muted-foreground/25"
-            }`}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) setFile(f);
-              }}
-              className="hidden"
-            />
-            {file ? (
-              <div className="space-y-2">
-                <FileSpreadsheet className="w-10 h-10 text-emerald-500 mx-auto" />
-                <p className="font-medium text-sm">{file.name}</p>
-                <p className="text-xs text-muted-foreground">{(file.size / 1024).toFixed(1)} KB</p>
-                <button onClick={(e) => { e.stopPropagation(); setFile(null); }} className="text-xs text-destructive hover:underline">
-                  Quitar archivo
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <Upload className="w-10 h-10 text-muted-foreground mx-auto" />
-                <p className="font-medium text-sm">Tocá para elegir un archivo</p>
-                <p className="text-xs text-muted-foreground">Excel (.xlsx, .xls) o CSV</p>
-              </div>
-            )}
-          </div>
-
-          {uploadProgress && (
-            <div className="flex items-center gap-2 text-sm text-emerald-600">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              {uploadProgress}
-            </div>
-          )}
-
-          <button
-            onClick={handleFileUpload}
-            disabled={uploading || !file}
-            className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold shadow-lg hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-base"
-          >
-            {uploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Upload className="w-5 h-5" /> Cargar lista</>}
-          </button>
-
-          <button onClick={() => { setCurrentMayoristaId(""); setFile(null); }} className="w-full py-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
-            Volver
-          </button>
+        <div className="space-y-2">
+          <Upload className="w-10 h-10 text-muted-foreground mx-auto" />
+          <p className="font-medium text-sm">Tocá para elegir un archivo</p>
+          <p className="text-xs text-muted-foreground">Excel (.xlsx, .xls) o CSV</p>
         </div>
       )}
+    </div>
+  );
 
-      {/* Delete products */}
-      {mayoristaActivo && (
+  // ---- MODO EDITAR (ya tiene comercio) ----
+  if (mayoristaActivo) {
+    return (
+      <div className="animate-fade-in-up space-y-6">
+        <div>
+          <h2 className="text-2xl font-bold">Mi Lista</h2>
+          <p className="text-muted-foreground mt-1">Actualizá los precios o gestioná tus productos</p>
+        </div>
+
+        <div className="flex items-center gap-4 p-5 rounded-2xl border bg-card">
+          <div className="w-12 h-12 rounded-xl bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center shrink-0">
+            <Truck className="w-6 h-6 text-emerald-600" />
+          </div>
+          <div>
+            <p className="font-bold text-lg">{mayoristaActivo.nombre}</p>
+            <p className="text-sm text-muted-foreground">{mayoristaActivo.rubro} · {mayoristaActivo._count?.productos || 0} productos</p>
+          </div>
+        </div>
+
+        <div className="space-y-4 p-6 rounded-2xl border bg-card">
+          <h3 className="font-semibold">Actualizar lista de precios</h3>
+          <p className="text-sm text-muted-foreground">Subí un nuevo Excel para reemplazar todos los productos actuales.</p>
+          {filePicker}
+          {uploadProgress && (
+            <div className="flex items-center gap-2 text-sm text-emerald-600">
+              <Loader2 className="w-4 h-4 animate-spin" />{uploadProgress}
+            </div>
+          )}
+          <button onClick={handleUpdateList} disabled={uploading || !file}
+            className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold shadow-lg hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-base">
+            {uploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Upload className="w-5 h-5" /> Actualizar lista</>}
+          </button>
+        </div>
+
         <div className="p-4 rounded-2xl border border-destructive/30 bg-destructive/5">
           <div className="flex items-start gap-3">
             <Trash2 className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
             <div className="flex-1">
               <h3 className="font-semibold text-sm">Borrar todos los productos</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">Eliminá todos los productos de {mayoristaActivo.nombre}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Eliminá la lista para cargar una nueva desde cero</p>
               <button
                 onClick={async () => {
                   if (!confirm(`¿Borrar todos los productos de ${mayoristaActivo.nombre}?`)) return;
@@ -869,13 +720,66 @@ function MayoristaView() {
                   } catch { toast.error("Error de conexión"); }
                 }}
                 className="mt-3 px-4 py-2 rounded-lg bg-destructive text-destructive-foreground text-sm font-medium hover:bg-destructive/90 transition-colors"
-              >
-                Borrar todo
-              </button>
+              >Borrar todo</button>
             </div>
           </div>
         </div>
-      )}
+      </div>
+    );
+  }
+
+  // ---- MODO CREAR (primera vez, sin comercio) ----
+  return (
+    <div className="animate-fade-in-up space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold">Configurar mi lista</h2>
+        <p className="text-muted-foreground mt-1">Ingresá el nombre de tu comercio y subí tu lista de precios</p>
+      </div>
+
+      <div className="space-y-4 p-6 rounded-2xl border bg-card">
+        <div>
+          <label className="text-sm font-medium mb-1 block">Nombre del comercio</label>
+          <input type="text" placeholder="Ej: Distribuidora Tomás"
+            value={nombre} onChange={(e) => setNombre(e.target.value)}
+            className="w-full px-4 py-3 rounded-xl border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all" />
+        </div>
+        <div>
+          <label className="text-sm font-medium mb-2 block">Rubro</label>
+          <div className="flex flex-wrap gap-2">
+            {rubros.map((r) => (
+              <button key={r} onClick={() => setRubro(r)}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                  rubro === r
+                    ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700"
+                    : "bg-muted text-muted-foreground hover:bg-muted/80"
+                }`}>{r}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3 p-6 rounded-2xl border bg-card">
+        <h3 className="font-semibold">
+          Lista de precios{" "}
+          <span className="text-muted-foreground font-normal text-sm">(podés cargarla después)</span>
+        </h3>
+        {filePicker}
+        {uploadProgress && (
+          <div className="flex items-center gap-2 text-sm text-emerald-600">
+            <Loader2 className="w-4 h-4 animate-spin" />{uploadProgress}
+          </div>
+        )}
+      </div>
+
+      <button onClick={handleCreate} disabled={loading || uploading || !nombre.trim() || !rubro}
+        className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold shadow-lg hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-base">
+        {loading || uploading
+          ? <Loader2 className="w-5 h-5 animate-spin" />
+          : file
+            ? <><Upload className="w-5 h-5" /> Crear y cargar lista</>
+            : <><Plus className="w-5 h-5" /> Crear comercio</>
+        }
+      </button>
     </div>
   );
 }
@@ -1785,24 +1689,20 @@ export default function Home() {
         const savedUser = JSON.parse(savedUserStr);
         setUser(savedUser);
 
-        const savedMayoristaId = localStorage.getItem("mayolista_mayorista_id");
-        if (!savedMayoristaId) { setCurrentView("dashboard"); return; }
-
         try {
           const res = await fetch("/api/mayoristas", { headers: authHeaders() });
-          if (!res.ok) { setCurrentView("dashboard"); return; }
+          if (!res.ok) { setCurrentView("mayorista"); return; }
           const list = await res.json();
-          const active = list.find((m: any) => m.id === savedMayoristaId);
-          if (active) {
+          if (list.length > 0) {
+            const active = list[0];
             setMayoristaActivo(active);
-            const p = await fetch(`/api/productos?mayoristaId=${savedMayoristaId}`, { headers: authHeaders() });
+            const p = await fetch(`/api/productos?mayoristaId=${active.id}`, { headers: authHeaders() });
             if (p.ok) setProductos(await p.json());
             setCurrentView("buscar");
           } else {
-            localStorage.removeItem("mayolista_mayorista_id");
-            setCurrentView("dashboard");
+            setCurrentView("mayorista");
           }
-        } catch { setCurrentView("dashboard"); }
+        } catch { setCurrentView("mayorista"); }
       } catch { /* ignore — muestra login */ }
       finally { if (!cancelled) setInitialized(true); }
     })();
