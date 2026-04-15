@@ -81,15 +81,18 @@ function parseQuantity(q: string): { cleanQuery: string; cantidad: number } {
 
 // ==================== LOGIN VIEW ====================
 function LoginView() {
+  const { setUser, setCurrentView } = useMayolistaStore();
   const [nombre, setNombre] = useState("");
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const handleLogin = async () => {
     if (!nombre.trim() || !email.trim()) {
-      toast.error("Completá tu nombre y email");
+      setError("Completá tu nombre y email");
       return;
     }
+    setError("");
     setLoading(true);
     try {
       const res = await fetch("/api/login", {
@@ -99,15 +102,15 @@ function LoginView() {
       });
       if (res.ok) {
         const data = await res.json();
-        useMayolistaStore.getState().setUser(data.user);
-        useMayolistaStore.getState().setCurrentView("dashboard");
         localStorage.setItem("mayolista_user", JSON.stringify(data.user));
-        toast.success(`¡Bienvenido, ${nombre.trim()}!`);
+        setUser(data.user);
+        setCurrentView("dashboard");
       } else {
-        toast.error("Error al iniciar sesión");
+        const body = await res.text().catch(() => "");
+        setError(`Error al ingresar (${res.status})${body ? ": " + body : ""}`);
       }
-    } catch {
-      toast.error("Error de conexión");
+    } catch (e: any) {
+      setError("Sin conexión. Verificá tu internet e intentá de nuevo.");
     } finally {
       setLoading(false);
     }
@@ -115,33 +118,18 @@ function LoginView() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-emerald-50 via-white to-emerald-50 dark:from-emerald-950 dark:via-gray-950 dark:to-emerald-950">
-      <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6 }}
-        className="w-full max-w-md"
-      >
+      <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <motion.div
-            initial={{ scale: 0.5, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-            className="inline-flex items-center justify-center w-24 h-24 rounded-3xl bg-gradient-to-br from-emerald-400 to-emerald-600 shadow-xl shadow-emerald-200 dark:shadow-emerald-900/30 mb-4"
-          >
+          <div className="inline-flex items-center justify-center w-24 h-24 rounded-3xl bg-gradient-to-br from-emerald-400 to-emerald-600 shadow-xl shadow-emerald-200 dark:shadow-emerald-900/30 mb-4">
             <ClipboardList className="w-12 h-12 text-white" />
-          </motion.div>
+          </div>
           <h1 className="text-4xl font-bold text-gradient">Mayolista-OK</h1>
           <p className="text-muted-foreground mt-2 text-lg">
-            Tu lista de mayorista, siempre lista
+            Tu lista de comercio, siempre lista
           </p>
         </div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.3 }}
-          className="bg-card rounded-2xl shadow-lg border p-6 space-y-4"
-        >
+        <div className="bg-card rounded-2xl shadow-lg border p-6 space-y-4">
           <div className="flex items-center gap-3 mb-2">
             <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
               <Store className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
@@ -152,6 +140,13 @@ function LoginView() {
             </div>
           </div>
 
+          {error && (
+            <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm">
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
           <div className="space-y-3">
             <div>
               <label className="text-sm font-medium mb-1 block">Tu nombre</label>
@@ -159,7 +154,7 @@ function LoginView() {
                 type="text"
                 placeholder="Ej: Juan Pérez"
                 value={nombre}
-                onChange={(e) => setNombre(e.target.value)}
+                onChange={(e) => { setNombre(e.target.value); setError(""); }}
                 onKeyDown={(e) => e.key === "Enter" && handleLogin()}
                 className="w-full px-4 py-3 rounded-xl border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
               />
@@ -170,7 +165,7 @@ function LoginView() {
                 type="email"
                 placeholder="Ej: juan@email.com"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => { setEmail(e.target.value); setError(""); }}
                 onKeyDown={(e) => e.key === "Enter" && handleLogin()}
                 className="w-full px-4 py-3 rounded-xl border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
               />
@@ -179,24 +174,21 @@ function LoginView() {
 
           <button
             onClick={handleLogin}
-            disabled={loading || !nombre.trim() || !email.trim()}
-            className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold text-base shadow-lg shadow-emerald-200 dark:shadow-emerald-900/30 hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            disabled={loading}
+            className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold text-base shadow-lg shadow-emerald-200 dark:shadow-emerald-900/30 hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {loading ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
+              <><Loader2 className="w-5 h-5 animate-spin" /> Ingresando...</>
             ) : (
-              <>
-                <LogIn className="w-5 h-5" />
-                Ingresar
-              </>
+              <><LogIn className="w-5 h-5" /> Ingresar</>
             )}
           </button>
 
           <p className="text-center text-xs text-muted-foreground">
             100% gratis · Sin tarjeta de crédito
           </p>
-        </motion.div>
-      </motion.div>
+        </div>
+      </div>
     </div>
   );
 }
