@@ -1,8 +1,9 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { Providers } from "@/components/providers";
+import { PWAPrompt } from "@/components/pwa-prompt";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -15,12 +16,26 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Mayolista-OK | Tu lista de mayorista, siempre lista",
+  title: "Mayolista-OK | Tu lista de comercio, siempre lista",
   description:
-    "Gestioná tus listas de precios mayoristas, armá pedidos rápido, compartí por WhatsApp, Excel o PDF. La herramienta ideal para vendedores de Latinoamérica.",
+    "Gestioná tus listas de precios, armá pedidos rápido, compartí por WhatsApp, Excel o PDF. La herramienta ideal para vendedores de Latinoamérica.",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Mayolista-OK",
+  },
   icons: {
     icon: "/logo-mayolista.png",
+    apple: "/logo-mayolista.png",
   },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#10b981",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
 };
 
 export default function RootLayout({
@@ -35,6 +50,7 @@ export default function RootLayout({
       >
         <Providers>{children}</Providers>
         <Toaster />
+        <PWAPrompt />
       </body>
     </html>
   );
