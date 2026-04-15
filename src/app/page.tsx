@@ -160,6 +160,7 @@ function LoginView() {
                 placeholder="Ej: Juan Pérez"
                 value={nombre}
                 onChange={(e) => setNombre(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleLogin()}
                 className="w-full px-4 py-3 rounded-xl border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
               />
             </div>
@@ -170,6 +171,7 @@ function LoginView() {
                 placeholder="Ej: juan@email.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleLogin()}
                 className="w-full px-4 py-3 rounded-xl border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
               />
             </div>
@@ -1777,64 +1779,53 @@ function MaestroView() {
 
 // ==================== MAIN APP ====================
 export default function Home() {
-  const { currentView, user, setUser, setCurrentView, setMayoristaActivo, setProductos, mayoristaActivo, productos } = useMayolistaStore();
-  const [restoring, setRestoring] = useState(true);
+  const { currentView, user, setUser, setCurrentView, setMayoristaActivo, setProductos } = useMayolistaStore();
+  const [initialized, setInitialized] = useState(false);
 
-  // Restore user from localStorage
+  // Un solo efecto que corre UNA VEZ al montar: restaura usuario + comercio
   useEffect(() => {
-    if (!user) {
-      try {
-        const saved = localStorage.getItem("mayolista_user");
-        if (saved) setUser(JSON.parse(saved));
-      } catch { /* ignore */ }
-    }
-  }, [user, setUser]);
-
-  // Auto-restore mayorista and products on startup
-  useEffect(() => {
-    if (!user) return;
-    
-    const savedMayoristaId = localStorage.getItem("mayolista_mayorista_id");
-    if (!savedMayoristaId) {
-      setCurrentView("dashboard");
-      setRestoring(false);
-      return;
-    }
-
+    let cancelled = false;
     (async () => {
       try {
-        const mayoristasRes = await fetch("/api/mayoristas", { headers: authHeaders() });
-        if (mayoristasRes.ok) {
-          const mayoristas = await mayoristasRes.json();
-          const active = mayoristas.find((m: any) => m.id === savedMayoristaId);
+        const savedUserStr = localStorage.getItem("mayolista_user");
+        if (!savedUserStr) return; // sin usuario → mostrar login
+
+        const savedUser = JSON.parse(savedUserStr);
+        setUser(savedUser);
+
+        const savedMayoristaId = localStorage.getItem("mayolista_mayorista_id");
+        if (!savedMayoristaId) { setCurrentView("dashboard"); return; }
+
+        try {
+          const res = await fetch("/api/mayoristas", { headers: authHeaders() });
+          if (!res.ok) { setCurrentView("dashboard"); return; }
+          const list = await res.json();
+          const active = list.find((m: any) => m.id === savedMayoristaId);
           if (active) {
             setMayoristaActivo(active);
-            // Load products
-            const prodRes = await fetch(`/api/productos?mayoristaId=${savedMayoristaId}`, { headers: authHeaders() });
-            if (prodRes.ok) {
-              const prods = await prodRes.json();
-              setProductos(prods);
-            }
+            const p = await fetch(`/api/productos?mayoristaId=${savedMayoristaId}`, { headers: authHeaders() });
+            if (p.ok) setProductos(await p.json());
             setCurrentView("buscar");
           } else {
             localStorage.removeItem("mayolista_mayorista_id");
             setCurrentView("dashboard");
           }
-        }
-      } catch { /* ignore */ }
-      finally { setRestoring(false); }
+        } catch { setCurrentView("dashboard"); }
+      } catch { /* ignore — muestra login */ }
+      finally { if (!cancelled) setInitialized(true); }
     })();
-  }, [user, setCurrentView, setMayoristaActivo, setProductos]);
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!user) return <LoginView />;
-
-  if (restoring) {
+  if (!initialized) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
       </div>
     );
   }
+
+  if (!user) return <LoginView />;
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
