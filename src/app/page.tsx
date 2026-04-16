@@ -1209,15 +1209,16 @@ function BuscarView() {
 function PedidoView() {
   const { pedidoItems, removeItem, updateItem, clearPedido, getTotalPedido, setCurrentView, mayoristaActivo, user, clienteActivo, descuentoGlobal, logo } = useMayolistaStore();
   const [sending, setSending] = useState(false);
+  const [guardado, setGuardado] = useState(false);
   const [nombreCliente, setNombreCliente] = useState((clienteActivo as any)?.nombre || "");
   const [direccionCliente, setDireccionCliente] = useState((clienteActivo as any)?.direccion || "");
   const total = getTotalPedido();
 
-  const handleConfirmar = async () => {
-    if (!pedidoItems.length) { toast.error("El pedido está vacío"); return; }
+  // Guarda el pedido en la DB (solo una vez). Devuelve true si ok.
+  const guardarPedido = async (): Promise<boolean> => {
+    if (guardado) return true;
     setSending(true);
     try {
-      // Si hay nombre de cliente, buscar o crear el registro
       let clienteId: string | null = null;
       if (nombreCliente.trim()) {
         const cRes = await fetch("/api/clientes", { headers: authHeaders() });
@@ -1238,7 +1239,6 @@ function PedidoView() {
           }
         }
       }
-
       const res = await fetch("/api/pedidos", {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
@@ -1254,18 +1254,25 @@ function PedidoView() {
         }),
       });
       if (res.ok) {
-        toast.success("Pedido guardado");
+        setGuardado(true);
         track("pedido_confirmado", { comercio: mayoristaActivo?.nombre ?? "", items: pedidoItems.length, total: getTotalPedido() });
-        clearPedido();
-        setCurrentView("historial");
+        return true;
+      } else {
+        toast.error("No se pudo guardar el pedido");
+        return false;
       }
-      else toast.error("Error al confirmar el pedido");
-    } catch { toast.error("Error de conexión"); }
-    finally { setSending(false); }
+    } catch {
+      toast.error("Error de conexión");
+      return false;
+    } finally {
+      setSending(false);
+    }
   };
 
-  const handleWhatsApp = () => {
+  const handleWhatsApp = async () => {
     if (!pedidoItems.length) return;
+    const ok = await guardarPedido();
+    if (!ok) return;
     const lineas = pedidoItems.map((i) => {
       const subtotal = i.precioUnitario * i.cantidad * (1 - i.descuentoPct / 100);
       const extras = [
@@ -1280,8 +1287,10 @@ function PedidoView() {
     window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, "_blank");
   };
 
-  const handleEmail = () => {
+  const handleEmail = async () => {
     if (!pedidoItems.length) return;
+    const ok = await guardarPedido();
+    if (!ok) return;
     const asunto = `Pedido ${mayoristaActivo?.nombre || "Comercio"}${nombreCliente ? ` — ${nombreCliente}` : ""} — ${new Date().toLocaleDateString("es-AR")}`;
     const clienteInfo = nombreCliente ? `Cliente: ${nombreCliente}${direccionCliente ? `\nDirección: ${direccionCliente}` : ""}\n` : "";
     const cuerpo = `${clienteInfo}Vendedor: ${(user as any)?.name || ""}\nFecha: ${new Date().toLocaleDateString("es-AR")}\n\n` +
@@ -1294,6 +1303,8 @@ function PedidoView() {
 
   const handlePDF = async () => {
     if (!pedidoItems.length) return;
+    const ok = await guardarPedido();
+    if (!ok) return;
     const fecha = new Date().toLocaleDateString("es-AR");
     const comercioNombre = mayoristaActivo?.nombre || "Comercio";
     const vendedorNombre = (user as any)?.name || "";
@@ -1400,6 +1411,8 @@ function PedidoView() {
   };
 
   const handleExcelPedido = async () => {
+    const ok = await guardarPedido();
+    if (!ok) return;
     const XLSX = await import("xlsx");
     const fecha = new Date().toLocaleDateString("es-AR");
     const comercioNombre = mayoristaActivo?.nombre || "comercio";
@@ -1573,11 +1586,11 @@ function PedidoView() {
             <Send className="w-4 h-4" /> Email
           </button>
         </div>
-        {/* Confirmar */}
-        <button onClick={handleConfirmar} disabled={sending}
-          className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold text-base shadow-lg hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2">
-          {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Check className="w-5 h-5" /> Confirmar y guardar pedido</>}
-        </button>
+        {guardado && (
+          <div className="flex items-center justify-center gap-2 text-emerald-600 text-sm font-medium py-1">
+            <Check className="w-4 h-4" /> Pedido guardado en historial
+          </div>
+        )}
         <button onClick={() => { if (confirm("¿Querés vaciar el pedido actual?")) clearPedido(); }}
           className="w-full py-2 text-xs text-destructive hover:underline text-center">
           Vaciar pedido
