@@ -36,6 +36,7 @@ import {
 import { useMayolistaStore } from "@/lib/store";
 import { toast } from "sonner";
 import Fuse from "fuse.js";
+import { track } from "@vercel/analytics";
 
 // ==================== HELPERS ====================
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
@@ -119,6 +120,7 @@ function LoginView() {
         const data = await res.json();
         localStorage.setItem("mayolista_user", JSON.stringify(data.user));
         setUser(data.user);
+        track("login", { email: data.user.email });
         // Auto-cargar comercio y decidir a dónde ir
         try {
           const mRes = await fetch("/api/mayoristas", { headers: { "x-user-id": data.user.id } });
@@ -1250,7 +1252,7 @@ function PedidoView() {
           })),
         }),
       });
-      if (res.ok) { toast.success("Pedido guardado"); clearPedido(); setCurrentView("historial"); }
+      if (res.ok) { toast.success("Pedido guardado"); track("pedido_confirmado", { comercio: mayoristaActivo?.nombre ?? "", items: pedidoItems.length, total: getTotalPedido() }); clearPedido(); setCurrentView("historial"); }
       else toast.error("Error al confirmar el pedido");
     } catch { toast.error("Error de conexión"); }
     finally { setSending(false); }
@@ -1268,6 +1270,7 @@ function PedidoView() {
     }).join("\n");
     const clienteLinea = nombreCliente ? `*Cliente: ${nombreCliente}*${direccionCliente ? `\n*Dirección: ${direccionCliente}*` : ""}\n` : "";
     const texto = `*PEDIDO — ${mayoristaActivo?.nombre || "Comercio"}*\n${clienteLinea}*Vendedor: ${(user as any)?.name || ""}*\n*Fecha: ${new Date().toLocaleDateString("es-AR")}*\n\n${lineas}\n\n*TOTAL: $${formatPrice(total)}*`;
+    track("whatsapp_compartido", { comercio: mayoristaActivo?.nombre ?? "" });
     window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, "_blank");
   };
 
@@ -1386,6 +1389,7 @@ function PedidoView() {
         }
       }
     }
+    track("pdf_generado", { comercio: mayoristaActivo?.nombre ?? "" });
     doc.save(fileName);
   };
 
@@ -1435,6 +1439,7 @@ function PedidoView() {
         }
       }
     }
+    track("excel_generado", { comercio: mayoristaActivo?.nombre ?? "" });
     XLSX.writeFile(wb, fileName);
   };
 

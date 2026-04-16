@@ -4,6 +4,7 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { Providers } from "@/components/providers";
 import { PWAPrompt } from "@/components/pwa-prompt";
+import { Analytics } from "@vercel/analytics/next";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -51,6 +52,7 @@ export default function RootLayout({
         <Providers>{children}</Providers>
         <Toaster />
         <PWAPrompt />
+        <Analytics />
       </body>
     </html>
   );
