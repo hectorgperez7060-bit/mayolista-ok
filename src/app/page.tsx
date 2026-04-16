@@ -1253,7 +1253,12 @@ function PedidoView() {
           })),
         }),
       });
-      if (res.ok) { toast.success("Pedido guardado"); track("pedido_confirmado", { comercio: mayoristaActivo?.nombre ?? "", items: pedidoItems.length, total: getTotalPedido() }); clearPedido(); setCurrentView("historial"); }
+      if (res.ok) {
+        toast.success("Pedido guardado");
+        track("pedido_confirmado", { comercio: mayoristaActivo?.nombre ?? "", items: pedidoItems.length, total: getTotalPedido() });
+        clearPedido();
+        setCurrentView("historial");
+      }
       else toast.error("Error al confirmar el pedido");
     } catch { toast.error("Error de conexión"); }
     finally { setSending(false); }
@@ -1672,34 +1677,38 @@ function HistorialView() {
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch("/api/pedidos", { headers: authHeaders() });
-        if (res.ok) {
-          const data = await res.json();
-          setPedidos(data);
-        } else {
-          const err = await res.json().catch(() => ({}));
-          setError(err.error || `Error ${res.status}`);
-        }
-      } catch (e: any) {
-        setError("Error de conexión");
-      } finally {
-        setLoading(false);
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/pedidos", { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setPedidos(data);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setError(err.error || `Error ${res.status}`);
       }
+    } catch (e: any) {
+      setError("Error de conexión");
+    } finally {
+      setLoading(false);
     }
-    load();
-  }, []);
+  };
+
+  useEffect(() => { load(); }, []);
 
   return (
     <div className="animate-fade-in-up space-y-4">
       <BackButton />
-      <div>
-        <h2 className="text-2xl font-bold">Historial de Pedidos</h2>
-        <p className="text-muted-foreground text-sm mt-1">Tocá un pedido para ver el detalle</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold">Historial de Pedidos</h2>
+          <p className="text-muted-foreground text-sm mt-1">Tocá un pedido para ver el detalle</p>
+        </div>
+        <button onClick={load} disabled={loading} className="p-2 rounded-xl border hover:bg-muted transition-colors disabled:opacity-50">
+          <Loader2 className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+        </button>
       </div>
 
       {loading ? (
