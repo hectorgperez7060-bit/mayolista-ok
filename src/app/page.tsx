@@ -1245,6 +1245,7 @@ function PedidoView() {
         body: JSON.stringify({
           mayoristaId: mayoristaActivo?.id,
           clienteId,
+          descuentoPct: descuentoGlobal,
           observaciones: direccionCliente.trim() || undefined,
           items: pedidoItems.map((i) => ({
             productoId: i.productoId, cantidad: i.cantidad,
@@ -1668,16 +1669,27 @@ function ClientesView() {
 function HistorialView() {
   const [pedidos, setPedidos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
       setLoading(true);
+      setError(null);
       try {
         const res = await fetch("/api/pedidos", { headers: authHeaders() });
-        if (res.ok) setPedidos(await res.json());
-      } catch { /* ignore */ }
-      finally { setLoading(false); }
+        if (res.ok) {
+          const data = await res.json();
+          setPedidos(data);
+        } else {
+          const err = await res.json().catch(() => ({}));
+          setError(err.error || `Error ${res.status}`);
+        }
+      } catch (e: any) {
+        setError("Error de conexión");
+      } finally {
+        setLoading(false);
+      }
     }
     load();
   }, []);
@@ -1693,6 +1705,12 @@ function HistorialView() {
       {loading ? (
         <div className="flex justify-center py-16">
           <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+        </div>
+      ) : error ? (
+        <div className="text-center py-16">
+          <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-3" />
+          <p className="text-red-500 font-medium">{error}</p>
+          <p className="text-xs text-muted-foreground mt-1">Intentá salir y volver a entrar</p>
         </div>
       ) : pedidos.length === 0 ? (
         <div className="text-center py-16">
