@@ -574,7 +574,7 @@ function DashboardView() {
 
 // ==================== MAYORISTA VIEW ====================
 function MayoristaView() {
-  const { setMayoristaActivo, setCurrentView, setProductos, mayoristaActivo, logo, setLogo } = useMayolistaStore();
+  const { setMayoristaActivo, setCurrentView, setProductos, mayoristaActivo, logo, setLogo, productos } = useMayolistaStore();
   const [nombre, setNombre] = useState("");
   const [rubro, setRubro] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -808,17 +808,24 @@ function MayoristaView() {
         </div>
 
         <div className="space-y-4 p-6 rounded-2xl border bg-card">
-          <h3 className="font-semibold">Actualizar lista de precios</h3>
-          <p className="text-sm text-muted-foreground">Subí un nuevo Excel para reemplazar todos los productos actuales.</p>
+          <h3 className="font-semibold">Cargar / actualizar lista de precios</h3>
+          <p className="text-sm text-muted-foreground">
+            {productos.length === 0
+              ? "Todavía no tenés productos. Elegí tu Excel y tocá el botón para cargar."
+              : "Subí un nuevo Excel para reemplazar todos los productos actuales."}
+          </p>
           {filePicker}
           {uploadProgress && (
             <div className="flex items-center gap-2 text-sm text-emerald-600">
               <Loader2 className="w-4 h-4 animate-spin" />{uploadProgress}
             </div>
           )}
+          {!file && (
+            <p className="text-xs text-muted-foreground text-center">← Primero elegí el archivo Excel, luego tocá el botón</p>
+          )}
           <button onClick={handleUpdateList} disabled={uploading || !file}
             className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-semibold shadow-lg hover:from-emerald-600 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-base">
-            {uploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Upload className="w-5 h-5" /> Actualizar lista</>}
+            {uploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Upload className="w-5 h-5" /> {productos.length === 0 ? "Cargar lista" : "Actualizar lista"}</>}
           </button>
         </div>
 
