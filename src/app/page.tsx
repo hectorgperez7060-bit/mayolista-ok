@@ -60,81 +60,71 @@ function formatPrice(p: number): string {
   return p.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// Parse quantity, discount and bonus from query
-// Ejemplos: "azucar 800 cada 20 una gratis", "azucar 5% desc", "azucar chango 800 10% descuento cada 15 gratis"
+// Parse quantity, discount and bonus — primero limpia bonus/descuento, luego extrae cantidad
+// Así "azucar 800 cada 20 gratis" o "azucar 5% desc 800" funcionan correctamente
 function parseQuantity(q: string): { cleanQuery: string; cantidad: number; descuentoPct: number; cantidadRegalo: number } {
   const units = "unidades?|unit|cajas?|bolsas?|packs?|kilos?|kgs?|kg|lts?|litros?|botellas?|latas?|docenas?|gramos?|grs?|metros?";
   let work = q;
+  let descuentoPct = 0;
+  let bonusRatio = 0;   // "cada N" → ratio
+  let bonusFree = 1;    // cuántas unidades gratis por ratio
+
+  // 1) Extraer descuento: "5% desc", "5%", "desc 5%"
+  const dscPat = /\b(\d+(?:[.,]\d+)?)\s*%(?:\s*desc(?:uento)?)?|\bdesc(?:uento)?\s+(\d+(?:[.,]\d+)?)\s*%/i;
+  const dm = work.match(dscPat);
+  if (dm) {
+    descuentoPct = parseFloat((dm[1] || dm[2]).replace(",", "."));
+    work = work.replace(dscPat, "").trim();
+  }
+
+  // 2) Extraer bonus: "cada 20 una gratis", "cada 20 gratis"
+  const cadaPat = /\bcada\s+(\d+)\s+(?:una?\s+)?gratis\b/i;
+  const cm = work.match(cadaPat);
+  if (cm) { bonusRatio = parseInt(cm[1]); work = work.replace(cadaPat, "").trim(); }
+
+  // "20+1" — por cada 20 va 1 gratis
+  const plusPat = /\b(?:x\s*)?(\d+)\s*\+\s*(\d+)\b/i;
+  const pm = work.match(plusPat);
+  if (pm && !cm) { bonusRatio = parseInt(pm[1]); bonusFree = parseInt(pm[2]); work = work.replace(plusPat, "").trim(); }
+
+  // 3) Ahora extraer cantidad del resto limpio
   let cantidad = 1;
 
-  // "2 y medio kilos" / "1 y medio litro"
   const yMedio = new RegExp(`\\b(\\d+)\\s+y\\s+medio\\s*(?:${units})?\\b`, "i");
   const ymMatch = work.match(yMedio);
   if (ymMatch) { cantidad = parseFloat(ymMatch[1]) + 0.5; work = work.replace(yMedio, "").trim(); }
-
-  // "medio kilo" / "medio litro"
   else if (new RegExp(`\\bmedio\\s*(?:${units})?\\b`, "i").test(work)) {
     const r = new RegExp(`\\bmedio\\s*(?:${units})?\\b`, "i");
     cantidad = 0.5; work = work.replace(r, "").trim();
-  }
-
-  // "88,50 kilos" / "1.5 litros"
-  else {
-    const decimalUnits = new RegExp(`\\b(\\d+[,.]\\d+)\\s*(?:${units})?\\b`, "i");
-    const dm = work.match(decimalUnits);
-    if (dm) { cantidad = parseFloat(dm[1].replace(",", ".")); work = work.replace(decimalUnits, "").trim(); }
+  } else {
+    const decU = new RegExp(`\\b(\\d+[,.]\\d+)\\s*(?:${units})?\\b`, "i");
+    const dmu = work.match(decU);
+    if (dmu) { cantidad = parseFloat(dmu[1].replace(",", ".")); work = work.replace(decU, "").trim(); }
     else {
-      // "88 kilos" / "3 litros"
-      const intUnits = new RegExp(`\\b(\\d+)\\s*(?:${units})\\b`, "i");
-      const im = work.match(intUnits);
-      if (im) { cantidad = parseInt(im[1], 10); work = work.replace(intUnits, "").trim(); }
+      const intU = new RegExp(`\\b(\\d+)\\s*(?:${units})\\b`, "i");
+      const imu = work.match(intU);
+      if (imu) { cantidad = parseInt(imu[1], 10); work = work.replace(intU, "").trim(); }
       else {
-        // número suelto al final: "azúcar 5"
-        const trailing = /\b(\d+(?:[,.]\d+)?)\s*$/;
-        const tm = work.match(trailing);
-        if (tm) { const n = parseFloat(tm[1].replace(",", ".")); if (n >= 0.1 && n <= 9999) { cantidad = n; work = work.replace(trailing, "").trim(); } }
+        // número suelto en cualquier posición: "azúcar 800" o "800 azucar"
+        const numPat = /\b(\d+(?:[,.]\d+)?)\b/g;
+        let best = 0;
+        let bestMatch = "";
+        let m;
+        while ((m = numPat.exec(work)) !== null) {
+          const n = parseFloat(m[1].replace(",", "."));
+          if (n >= 2 && n <= 99999 && n > best) { best = n; bestMatch = m[0]; }
+        }
+        if (best > 0) { cantidad = best; work = work.replace(bestMatch, "").trim(); }
       }
     }
   }
 
   if (cantidad <= 0) cantidad = 1;
-  const extras = parseExtras(work, cantidad);
-  return { cleanQuery: extras.cleanQuery, cantidad, descuentoPct: extras.descuentoPct, cantidadRegalo: extras.cantidadRegalo };
-}
+  const cantidadRegalo = bonusRatio > 0 ? Math.floor(cantidad / bonusRatio) * bonusFree : 0;
 
-function parseExtras(q: string, cantidad: number): { cleanQuery: string; descuentoPct: number; cantidadRegalo: number } {
-  let work = q;
-  let descuentoPct = 0;
-  let cantidadRegalo = 0;
-
-  // Descuento: "5% desc", "5% descuento", "desc 5%", "10%"
-  const dscPattern = /\b(\d+(?:[.,]\d+)?)\s*%\s*(?:desc(?:uento)?)?|\bdesc(?:uento)?\s+(\d+(?:[.,]\d+)?)\s*%/i;
-  const dm = work.match(dscPattern);
-  if (dm) {
-    descuentoPct = parseFloat((dm[1] || dm[2]).replace(",", "."));
-    work = work.replace(dscPattern, "").trim();
-  }
-
-  // Bonificación: "cada 20 una gratis", "cada 20 gratis", "20+1", "x20+1"
-  const cadaPattern = /\bcada\s+(\d+)\s+(?:una?\s+)?gratis\b/i;
-  const cm = work.match(cadaPattern);
-  if (cm) {
-    const ratio = parseInt(cm[1]);
-    cantidadRegalo = ratio > 0 ? Math.floor(cantidad / ratio) : 0;
-    work = work.replace(cadaPattern, "").trim();
-  }
-
-  // "20+1" o "x20+1" — por cada 20 va 1 gratis
-  const plusPattern = /\b(?:x\s*)?(\d+)\s*\+\s*(\d+)\b/i;
-  const pm = work.match(plusPattern);
-  if (pm && !cm) {
-    const ratio = parseInt(pm[1]);
-    const free = parseInt(pm[2]);
-    cantidadRegalo = ratio > 0 ? Math.floor(cantidad / ratio) * free : 0;
-    work = work.replace(plusPattern, "").trim();
-  }
-
-  return { cleanQuery: work.trim(), descuentoPct, cantidadRegalo };
+  // Limpiar espacios dobles
+  const cleanQuery = work.replace(/\s{2,}/g, " ").trim();
+  return { cleanQuery, cantidad, descuentoPct, cantidadRegalo };
 }
 
 // Muestra cantidad sin decimales innecesarios: 1.0 → "1", 1.5 → "1,5", 88.5 → "88,5"
