@@ -125,7 +125,7 @@ export default function LandingPage() {
               { icon: "📄", title: "PDF profesional", desc: "Con tu logo, nombre del comercio, cliente y fecha. Listo para enviar en segundos." },
               { icon: "💬", title: "WhatsApp directo", desc: "Un toque y el pedido formateado va al WhatsApp del cliente. Sin copiar ni pegar." },
               { icon: "📊", title: "Historial completo", desc: "Todos tus pedidos por cliente y fecha. Tocás uno y ves el detalle completo." },
-              { icon: "📱", title: "Funciona sin internet", desc: "Instalala en el celular como app. La lista de precios queda guardada offline." },
+              { icon: "📱", title: "Se instala en el celular", desc: "Agregala a la pantalla de inicio como una app. Abre directo, sin ir al navegador." },
             ].map((f) => (
               <div key={f.title} className="bg-white/[0.03] border border-white/10 rounded-2xl p-5 hover:border-emerald-500/30 transition-colors group">
                 <div className="text-2xl mb-3">{f.icon}</div>
