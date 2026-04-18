@@ -60,52 +60,81 @@ function formatPrice(p: number): string {
   return p.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// Parse quantity from query — soporta enteros, decimales, fracciones y medios
-// Ejemplos: "asado 88,50 kilos", "1.5 litros aceite", "medio kilo azúcar", "2 y medio litros"
-function parseQuantity(q: string): { cleanQuery: string; cantidad: number } {
+// Parse quantity, discount and bonus from query
+// Ejemplos: "azucar 800 cada 20 una gratis", "azucar 5% desc", "azucar chango 800 10% descuento cada 15 gratis"
+function parseQuantity(q: string): { cleanQuery: string; cantidad: number; descuentoPct: number; cantidadRegalo: number } {
   const units = "unidades?|unit|cajas?|bolsas?|packs?|kilos?|kgs?|kg|lts?|litros?|botellas?|latas?|docenas?|gramos?|grs?|metros?";
+  let work = q;
+  let cantidad = 1;
 
   // "2 y medio kilos" / "1 y medio litro"
   const yMedio = new RegExp(`\\b(\\d+)\\s+y\\s+medio\\s*(?:${units})?\\b`, "i");
-  const ymMatch = q.match(yMedio);
-  if (ymMatch) {
-    const cantidad = parseFloat(ymMatch[1]) + 0.5;
-    return { cleanQuery: q.replace(yMedio, "").trim(), cantidad };
-  }
+  const ymMatch = work.match(yMedio);
+  if (ymMatch) { cantidad = parseFloat(ymMatch[1]) + 0.5; work = work.replace(yMedio, "").trim(); }
 
   // "medio kilo" / "medio litro"
-  const soloMedio = new RegExp(`\\bmedio\\s*(?:${units})?\\b`, "i");
-  if (soloMedio.test(q)) {
-    return { cleanQuery: q.replace(soloMedio, "").trim(), cantidad: 0.5 };
+  else if (new RegExp(`\\bmedio\\s*(?:${units})?\\b`, "i").test(work)) {
+    const r = new RegExp(`\\bmedio\\s*(?:${units})?\\b`, "i");
+    cantidad = 0.5; work = work.replace(r, "").trim();
   }
 
-  // "88,50 kilos" / "1.5 litros" / "400 unidades"
-  const decimalUnits = new RegExp(`\\b(\\d+[,.]\\d+)\\s*(?:${units})?\\b`, "i");
-  const dmatch = q.match(decimalUnits);
-  if (dmatch) {
-    const cantidad = parseFloat(dmatch[1].replace(",", "."));
-    return { cleanQuery: q.replace(decimalUnits, "").trim(), cantidad: cantidad > 0 ? cantidad : 1 };
-  }
-
-  // "88 kilos" / "3 litros" (entero con unidad)
-  const intUnits = new RegExp(`\\b(\\d+)\\s*(?:${units})\\b`, "i");
-  const imatch = q.match(intUnits);
-  if (imatch) {
-    const cantidad = parseInt(imatch[1], 10);
-    return { cleanQuery: q.replace(intUnits, "").trim(), cantidad: cantidad > 0 ? cantidad : 1 };
-  }
-
-  // número al final sin unidad: "azúcar 5"
-  const trailing = /\b(\d+(?:[,.]\d+)?)\s*$/;
-  const tmatch = q.match(trailing);
-  if (tmatch) {
-    const num = parseFloat(tmatch[1].replace(",", "."));
-    if (num >= 0.1 && num <= 9999) {
-      return { cleanQuery: q.replace(trailing, "").trim(), cantidad: num };
+  // "88,50 kilos" / "1.5 litros"
+  else {
+    const decimalUnits = new RegExp(`\\b(\\d+[,.]\\d+)\\s*(?:${units})?\\b`, "i");
+    const dm = work.match(decimalUnits);
+    if (dm) { cantidad = parseFloat(dm[1].replace(",", ".")); work = work.replace(decimalUnits, "").trim(); }
+    else {
+      // "88 kilos" / "3 litros"
+      const intUnits = new RegExp(`\\b(\\d+)\\s*(?:${units})\\b`, "i");
+      const im = work.match(intUnits);
+      if (im) { cantidad = parseInt(im[1], 10); work = work.replace(intUnits, "").trim(); }
+      else {
+        // número suelto al final: "azúcar 5"
+        const trailing = /\b(\d+(?:[,.]\d+)?)\s*$/;
+        const tm = work.match(trailing);
+        if (tm) { const n = parseFloat(tm[1].replace(",", ".")); if (n >= 0.1 && n <= 9999) { cantidad = n; work = work.replace(trailing, "").trim(); } }
+      }
     }
   }
 
-  return { cleanQuery: q, cantidad: 1 };
+  if (cantidad <= 0) cantidad = 1;
+  const extras = parseExtras(work, cantidad);
+  return { cleanQuery: extras.cleanQuery, cantidad, descuentoPct: extras.descuentoPct, cantidadRegalo: extras.cantidadRegalo };
+}
+
+function parseExtras(q: string, cantidad: number): { cleanQuery: string; descuentoPct: number; cantidadRegalo: number } {
+  let work = q;
+  let descuentoPct = 0;
+  let cantidadRegalo = 0;
+
+  // Descuento: "5% desc", "5% descuento", "desc 5%", "10%"
+  const dscPattern = /\b(\d+(?:[.,]\d+)?)\s*%\s*(?:desc(?:uento)?)?|\bdesc(?:uento)?\s+(\d+(?:[.,]\d+)?)\s*%/i;
+  const dm = work.match(dscPattern);
+  if (dm) {
+    descuentoPct = parseFloat((dm[1] || dm[2]).replace(",", "."));
+    work = work.replace(dscPattern, "").trim();
+  }
+
+  // Bonificación: "cada 20 una gratis", "cada 20 gratis", "20+1", "x20+1"
+  const cadaPattern = /\bcada\s+(\d+)\s+(?:una?\s+)?gratis\b/i;
+  const cm = work.match(cadaPattern);
+  if (cm) {
+    const ratio = parseInt(cm[1]);
+    cantidadRegalo = ratio > 0 ? Math.floor(cantidad / ratio) : 0;
+    work = work.replace(cadaPattern, "").trim();
+  }
+
+  // "20+1" o "x20+1" — por cada 20 va 1 gratis
+  const plusPattern = /\b(?:x\s*)?(\d+)\s*\+\s*(\d+)\b/i;
+  const pm = work.match(plusPattern);
+  if (pm && !cm) {
+    const ratio = parseInt(pm[1]);
+    const free = parseInt(pm[2]);
+    cantidadRegalo = ratio > 0 ? Math.floor(cantidad / ratio) * free : 0;
+    work = work.replace(plusPattern, "").trim();
+  }
+
+  return { cleanQuery: work.trim(), descuentoPct, cantidadRegalo };
 }
 
 // Muestra cantidad sin decimales innecesarios: 1.0 → "1", 1.5 → "1,5", 88.5 → "88,5"
@@ -1033,8 +1062,8 @@ function BuscarView() {
   const alternativas = resultados.slice(1);
 
   // Agregar producto al pedido y volver a búsqueda para el siguiente
-  const handleAgregar = useCallback((producto: typeof productos[0], qty: number) => {
-    addItem({ cantidad: qty, cantidadRegalo: 0, precioUnitario: producto.precio, descuentoPct: 0, productoId: producto.id, producto });
+  const handleAgregar = useCallback((producto: typeof productos[0], qty: number, dscPct = 0, regalo = 0) => {
+    addItem({ cantidad: qty, cantidadRegalo: regalo, precioUnitario: producto.precio, descuentoPct: dscPct, productoId: producto.id, producto });
     setLastAdded({ nombre: producto.descripcion, cantidad: qty });
     setQuery("");
     setTimeout(() => setLastAdded(null), 3000);
@@ -1172,7 +1201,7 @@ function BuscarView() {
                 </span>
               </div>
               <button
-                onClick={() => handleAgregar(mejorResultado, cantidad)}
+                onClick={() => handleAgregar(mejorResultado, cantidad, parsed.descuentoPct, parsed.cantidadRegalo)}
                 className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold text-base shadow-lg hover:from-emerald-600 hover:to-emerald-700 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
               >
                 <ShoppingCart className="w-5 h-5" />
@@ -1203,7 +1232,7 @@ function BuscarView() {
                     </p>
                   </div>
                   <button
-                    onClick={() => handleAgregar(p, cantidad)}
+                    onClick={() => handleAgregar(p, cantidad, parsed.descuentoPct, parsed.cantidadRegalo)}
                     className="shrink-0 px-3 py-2.5 rounded-xl bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 text-sm font-bold hover:bg-emerald-200 dark:hover:bg-emerald-800/50 transition-colors"
                   >
                     + Agregar
