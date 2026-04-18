@@ -747,7 +747,8 @@ function MayoristaView() {
         file ? "border-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20" : "border-muted-foreground/25"
       }`}
     >
-      <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv"
+      <input ref={fileInputRef} type="file"
+        accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,application/csv"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) setFile(f); }} className="hidden" />
       {file ? (
         <div className="space-y-2">
@@ -1247,7 +1248,7 @@ function BuscarView() {
 // ==================== PEDIDO VIEW ====================
 function PedidoView() {
   const { pedidoItems, removeItem, updateItem, clearPedido, getTotalPedido, setCurrentView, mayoristaActivo, user, clienteActivo, descuentoGlobal, logo } = useMayolistaStore();
-  const [sending, setSending] = useState(false);
+  const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState(false);
   const [nombreCliente, setNombreCliente] = useState((clienteActivo as any)?.nombre || "");
   const [direccionCliente, setDireccionCliente] = useState((clienteActivo as any)?.direccion || "");
@@ -1256,7 +1257,7 @@ function PedidoView() {
   // Guarda el pedido en la DB (solo una vez). Devuelve true si ok.
   const guardarPedido = async (): Promise<boolean> => {
     if (guardado) return true;
-    setSending(true);
+    setGuardando(true);
     try {
       let clienteId: string | null = null;
       if (nombreCliente.trim()) {
@@ -1304,7 +1305,7 @@ function PedidoView() {
       toast.error("Error de conexión");
       return false;
     } finally {
-      setSending(false);
+      setGuardando(false);
     }
   };
 
@@ -1608,21 +1609,21 @@ function PedidoView() {
         </div>
         {/* Exportar */}
         <div className="grid grid-cols-4 gap-2">
-          <button onClick={handleWhatsApp}
-            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-green-600 text-white font-semibold text-xs hover:bg-green-700 transition-colors">
-            <Send className="w-4 h-4" /> WhatsApp
+          <button onClick={handleWhatsApp} disabled={guardando}
+            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-green-600 text-white font-semibold text-xs hover:bg-green-700 transition-colors disabled:opacity-60">
+            {guardando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} WhatsApp
           </button>
-          <button onClick={handlePDF}
-            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-red-500 text-white font-semibold text-xs hover:bg-red-600 transition-colors">
-            <FileSpreadsheet className="w-4 h-4" /> PDF
+          <button onClick={handlePDF} disabled={guardando}
+            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-red-500 text-white font-semibold text-xs hover:bg-red-600 transition-colors disabled:opacity-60">
+            {guardando ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />} PDF
           </button>
-          <button onClick={handleExcelPedido}
-            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-emerald-600 text-white font-semibold text-xs hover:bg-emerald-700 transition-colors">
-            <FileSpreadsheet className="w-4 h-4" /> Excel
+          <button onClick={handleExcelPedido} disabled={guardando}
+            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-emerald-600 text-white font-semibold text-xs hover:bg-emerald-700 transition-colors disabled:opacity-60">
+            {guardando ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />} Excel
           </button>
-          <button onClick={handleEmail}
-            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-blue-500 text-white font-semibold text-xs hover:bg-blue-600 transition-colors">
-            <Send className="w-4 h-4" /> Email
+          <button onClick={handleEmail} disabled={guardando}
+            className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-blue-500 text-white font-semibold text-xs hover:bg-blue-600 transition-colors disabled:opacity-60">
+            {guardando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Email
           </button>
         </div>
         {guardado && (
