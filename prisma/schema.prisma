@@ -77,8 +77,8 @@ model Pedido {
 
 model PedidoItem {
   id              String    @id @default(cuid())
-  cantidad        Int
-  cantidadRegalo  Int       @default(0)
+  cantidad        Float
+  cantidadRegalo  Float     @default(0)
   precioUnitario  Float
   descuentoPct    Float     @default(0)
   pedidoId        String

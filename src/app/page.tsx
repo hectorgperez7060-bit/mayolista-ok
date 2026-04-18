@@ -60,25 +60,57 @@ function formatPrice(p: number): string {
   return p.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// Parse quantity from query: "azúcar chango 400 unidades" -> { query: "azúcar chango", cantidad: 400 }
+// Parse quantity from query — soporta enteros, decimales, fracciones y medios
+// Ejemplos: "asado 88,50 kilos", "1.5 litros aceite", "medio kilo azúcar", "2 y medio litros"
 function parseQuantity(q: string): { cleanQuery: string; cantidad: number } {
-  const qtyPattern = /\b(\d+)\s*(?:unidades?|unit|cajas?|bolsas?|packs?|kilos?|kgs?|kg|botellas?|latas?|docenas?)\b/i;
-  const match = q.match(qtyPattern);
-  if (match) {
-    const cantidad = parseInt(match[1], 10);
-    const cleanQuery = q.replace(qtyPattern, "").trim();
-    return { cleanQuery, cantidad: cantidad > 0 ? cantidad : 1 };
+  const units = "unidades?|unit|cajas?|bolsas?|packs?|kilos?|kgs?|kg|lts?|litros?|botellas?|latas?|docenas?|gramos?|grs?|metros?";
+
+  // "2 y medio kilos" / "1 y medio litro"
+  const yMedio = new RegExp(`\\b(\\d+)\\s+y\\s+medio\\s*(?:${units})?\\b`, "i");
+  const ymMatch = q.match(yMedio);
+  if (ymMatch) {
+    const cantidad = parseFloat(ymMatch[1]) + 0.5;
+    return { cleanQuery: q.replace(yMedio, "").trim(), cantidad };
   }
-  const qtyPattern2 = /\b(\d+)\s*\w*$/;
-  const match2 = q.match(qtyPattern2);
-  if (match2 && parseInt(match2[1], 10) > 1) {
-    const num = parseInt(match2[1], 10);
-    if (num >= 2 && num <= 9999) {
-      const cleanQuery = q.replace(qtyPattern2, "").trim();
-      return { cleanQuery, cantidad: num };
+
+  // "medio kilo" / "medio litro"
+  const soloMedio = new RegExp(`\\bmedio\\s*(?:${units})?\\b`, "i");
+  if (soloMedio.test(q)) {
+    return { cleanQuery: q.replace(soloMedio, "").trim(), cantidad: 0.5 };
+  }
+
+  // "88,50 kilos" / "1.5 litros" / "400 unidades"
+  const decimalUnits = new RegExp(`\\b(\\d+[,.]\\d+)\\s*(?:${units})?\\b`, "i");
+  const dmatch = q.match(decimalUnits);
+  if (dmatch) {
+    const cantidad = parseFloat(dmatch[1].replace(",", "."));
+    return { cleanQuery: q.replace(decimalUnits, "").trim(), cantidad: cantidad > 0 ? cantidad : 1 };
+  }
+
+  // "88 kilos" / "3 litros" (entero con unidad)
+  const intUnits = new RegExp(`\\b(\\d+)\\s*(?:${units})\\b`, "i");
+  const imatch = q.match(intUnits);
+  if (imatch) {
+    const cantidad = parseInt(imatch[1], 10);
+    return { cleanQuery: q.replace(intUnits, "").trim(), cantidad: cantidad > 0 ? cantidad : 1 };
+  }
+
+  // número al final sin unidad: "azúcar 5"
+  const trailing = /\b(\d+(?:[,.]\d+)?)\s*$/;
+  const tmatch = q.match(trailing);
+  if (tmatch) {
+    const num = parseFloat(tmatch[1].replace(",", "."));
+    if (num >= 0.1 && num <= 9999) {
+      return { cleanQuery: q.replace(trailing, "").trim(), cantidad: num };
     }
   }
+
   return { cleanQuery: q, cantidad: 1 };
+}
+
+// Muestra cantidad sin decimales innecesarios: 1.0 → "1", 1.5 → "1,5", 88.5 → "88,5"
+function formatQty(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toLocaleString("es-AR", { maximumFractionDigits: 3 });
 }
 
 // ==================== BACK BUTTON ====================
@@ -1279,7 +1311,7 @@ function PedidoView() {
         i.cantidadRegalo > 0 ? `+${i.cantidadRegalo} bonif.` : "",
         i.descuentoPct > 0 ? `${i.descuentoPct}% dto` : "",
       ].filter(Boolean).join(" · ");
-      return `• [${i.producto.codigo || "---"}] ${i.producto.descripcion}\n  x${i.cantidad} × $${formatPrice(i.precioUnitario)} = $${formatPrice(subtotal)}${extras ? `  (${extras})` : ""}`;
+      return `• [${i.producto.codigo || "---"}] ${i.producto.descripcion}\n  x${formatQty(i.cantidad)} × $${formatPrice(i.precioUnitario)} = $${formatPrice(subtotal)}${extras ? `  (${extras})` : ""}`;
     }).join("\n");
     const clienteLinea = nombreCliente ? `*Cliente: ${nombreCliente}*${direccionCliente ? `\n*Dirección: ${direccionCliente}*` : ""}\n` : "";
     const texto = `*PEDIDO — ${mayoristaActivo?.nombre || "Comercio"}*\n${clienteLinea}*Vendedor: ${(user as any)?.name || ""}*\n*Fecha: ${new Date().toLocaleDateString("es-AR")}*\n\n${lineas}\n\n*TOTAL: $${formatPrice(total)}*`;
@@ -1296,7 +1328,7 @@ function PedidoView() {
     const cuerpo = `${clienteInfo}Vendedor: ${(user as any)?.name || ""}\nFecha: ${new Date().toLocaleDateString("es-AR")}\n\n` +
       pedidoItems.map((i) => {
         const subtotal = i.precioUnitario * i.cantidad * (1 - i.descuentoPct / 100);
-        return `${i.producto.codigo || ""} | ${i.producto.descripcion} | x${i.cantidad} | $${formatPrice(i.precioUnitario)} | $${formatPrice(subtotal)}`;
+        return `${i.producto.codigo || ""} | ${i.producto.descripcion} | x${formatQty(i.cantidad)} | $${formatPrice(i.precioUnitario)} | $${formatPrice(subtotal)}`;
       }).join("\n") + `\n\nTOTAL: $${formatPrice(total)}`;
     window.open(`mailto:?subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(cuerpo)}`);
   };
@@ -1352,7 +1384,7 @@ function PedidoView() {
       return [
         i.producto.codigo || "—",
         i.producto.descripcion,
-        String(i.cantidad),
+        formatQty(i.cantidad),
         `$${formatPrice(i.precioUnitario)}`,
         extras || "—",
         `$${formatPrice(subtotal)}`,
@@ -1540,19 +1572,19 @@ function PedidoView() {
                 {item.descuentoPct > 0 && <span className="text-right text-emerald-600">{item.descuentoPct}% descuento</span>}
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => updateItem(item.productoId, { cantidad: Math.max(1, item.cantidad - 1) })}
+                <button onClick={() => updateItem(item.productoId, { cantidad: Math.max(0.001, parseFloat((item.cantidad - 1).toFixed(3))) })}
                   className="w-8 h-8 rounded-lg border flex items-center justify-center hover:bg-muted transition-colors font-bold text-base">−</button>
-                <input type="number" value={item.cantidad}
-                  onChange={(e) => updateItem(item.productoId, { cantidad: Math.max(1, parseInt(e.target.value) || 1) })}
-                  className="w-14 h-8 rounded-lg border bg-background text-center text-sm font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+                <input type="number" value={item.cantidad} step="any" min="0.001"
+                  onChange={(e) => updateItem(item.productoId, { cantidad: Math.max(0.001, parseFloat(e.target.value) || 0.001) })}
+                  className="w-16 h-8 rounded-lg border bg-background text-center text-sm font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500" />
                 <button onClick={() => updateItem(item.productoId, { cantidad: item.cantidad + 1 })}
                   className="w-8 h-8 rounded-lg border flex items-center justify-center hover:bg-muted transition-colors font-bold text-base">+</button>
                 <div className="ml-auto flex items-center gap-2">
                   <input type="number" min="0" max="100" placeholder="Dto%" value={item.descuentoPct || ""}
                     onChange={(e) => updateItem(item.productoId, { descuentoPct: Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)) })}
                     className="w-16 h-8 rounded-lg border bg-background text-center text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500" />
-                  <input type="number" min="0" placeholder="Bon." value={item.cantidadRegalo || ""}
-                    onChange={(e) => updateItem(item.productoId, { cantidadRegalo: Math.max(0, parseInt(e.target.value) || 0) })}
+                  <input type="number" min="0" step="any" placeholder="Bon." value={item.cantidadRegalo || ""}
+                    onChange={(e) => updateItem(item.productoId, { cantidadRegalo: Math.max(0, parseFloat(e.target.value) || 0) })}
                     className="w-14 h-8 rounded-lg border bg-background text-center text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500" />
                 </div>
               </div>
