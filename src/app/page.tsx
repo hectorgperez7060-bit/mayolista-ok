@@ -1315,6 +1315,8 @@ function PedidoView() {
       if (res.ok) {
         setGuardado(true);
         track("pedido_confirmado", { comercio: mayoristaActivo?.nombre ?? "", items: pedidoItems.length, total: getTotalPedido() });
+        // Limpiar pedido y navegar al historial después de 1.5s
+        setTimeout(() => { clearPedido(); setCurrentView("historial"); }, 1500);
         return true;
       } else {
         toast.error("No se pudo guardar el pedido");
