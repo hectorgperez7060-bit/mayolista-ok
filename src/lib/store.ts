@@ -1,6 +1,24 @@
 import { create } from "zustand";
 import type { Producto, PedidoItemConProducto, Mayorista, Cliente } from "@/lib/types";
 
+const PEDIDO_KEY = "mayolista_pedido";
+
+function savePedido(items: PedidoItemConProducto[], descuento: number) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(PEDIDO_KEY, JSON.stringify({ items, descuento }));
+  } catch { /* ignore */ }
+}
+
+function loadPedido(): { items: PedidoItemConProducto[]; descuento: number } {
+  if (typeof window === "undefined") return { items: [], descuento: 0 };
+  try {
+    const raw = localStorage.getItem(PEDIDO_KEY);
+    if (!raw) return { items: [], descuento: 0 };
+    return JSON.parse(raw);
+  } catch { return { items: [], descuento: 0 }; }
+}
+
 interface MayolistaState {
   // Auth
   user: any | null;
@@ -26,7 +44,7 @@ interface MayolistaState {
   clienteActivo: Cliente | null;
   setClienteActivo: (c: Cliente | null) => void;
 
-  // Pedido actual
+  // Pedido actual (persiste en localStorage)
   pedidoItems: PedidoItemConProducto[];
   descuentoGlobal: number;
   setDescuentoGlobal: (d: number) => void;
@@ -35,7 +53,10 @@ interface MayolistaState {
   updateItem: (productoId: string, updates: Partial<PedidoItemConProducto>) => void;
   clearPedido: () => void;
   getTotalPedido: () => number;
+  restorePedido: () => void;
 }
+
+const saved = loadPedido();
 
 export const useMayolistaStore = create<MayolistaState>((set, get) => ({
   user: null,
@@ -47,11 +68,8 @@ export const useMayolistaStore = create<MayolistaState>((set, get) => ({
   mayoristaActivo: null,
   setMayoristaActivo: (m) => {
     if (typeof window !== "undefined") {
-      if (m) {
-        localStorage.setItem("mayolista_mayorista_id", m.id);
-      } else {
-        localStorage.removeItem("mayolista_mayorista_id");
-      }
+      if (m) localStorage.setItem("mayolista_mayorista_id", m.id);
+      else localStorage.removeItem("mayolista_mayorista_id");
     }
     set({ mayoristaActivo: m });
   },
@@ -71,33 +89,45 @@ export const useMayolistaStore = create<MayolistaState>((set, get) => ({
   clienteActivo: null,
   setClienteActivo: (c) => set({ clienteActivo: c }),
 
-  pedidoItems: [],
-  descuentoGlobal: 0,
-  setDescuentoGlobal: (d) => set({ descuentoGlobal: d }),
+  pedidoItems: saved.items,
+  descuentoGlobal: saved.descuento,
+
+  setDescuentoGlobal: (d) => {
+    savePedido(get().pedidoItems, d);
+    set({ descuentoGlobal: d });
+  },
   addItem: (item) => {
     const { pedidoItems } = get();
     const existing = pedidoItems.find((i) => i.productoId === item.productoId);
+    let next: PedidoItemConProducto[];
     if (existing) {
-      set({
-        pedidoItems: pedidoItems.map((i) =>
-          i.productoId === item.productoId
-            ? { ...i, cantidad: i.cantidad + item.cantidad }
-            : i
-        ),
-      });
+      next = pedidoItems.map((i) =>
+        i.productoId === item.productoId
+          ? { ...i, cantidad: i.cantidad + item.cantidad }
+          : i
+      );
     } else {
-      set({ pedidoItems: [...pedidoItems, item] });
+      next = [...pedidoItems, item];
     }
+    savePedido(next, get().descuentoGlobal);
+    set({ pedidoItems: next });
   },
-  removeItem: (productoId) =>
-    set({ pedidoItems: get().pedidoItems.filter((i) => i.productoId !== productoId) }),
-  updateItem: (productoId, updates) =>
-    set({
-      pedidoItems: get().pedidoItems.map((i) =>
-        i.productoId === productoId ? { ...i, ...updates } : i
-      ),
-    }),
-  clearPedido: () => set({ pedidoItems: [], descuentoGlobal: 0 }),
+  removeItem: (productoId) => {
+    const next = get().pedidoItems.filter((i) => i.productoId !== productoId);
+    savePedido(next, get().descuentoGlobal);
+    set({ pedidoItems: next });
+  },
+  updateItem: (productoId, updates) => {
+    const next = get().pedidoItems.map((i) =>
+      i.productoId === productoId ? { ...i, ...updates } : i
+    );
+    savePedido(next, get().descuentoGlobal);
+    set({ pedidoItems: next });
+  },
+  clearPedido: () => {
+    if (typeof window !== "undefined") localStorage.removeItem(PEDIDO_KEY);
+    set({ pedidoItems: [], descuentoGlobal: 0 });
+  },
   getTotalPedido: () => {
     const { pedidoItems, descuentoGlobal } = get();
     const subtotal = pedidoItems.reduce((sum, item) => {
@@ -106,5 +136,9 @@ export const useMayolistaStore = create<MayolistaState>((set, get) => ({
       return sum + itemTotal - itemDiscount;
     }, 0);
     return subtotal * (1 - descuentoGlobal / 100);
+  },
+  restorePedido: () => {
+    const { items, descuento } = loadPedido();
+    set({ pedidoItems: items, descuentoGlobal: descuento });
   },
 }));
