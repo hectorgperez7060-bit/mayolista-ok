@@ -1267,71 +1267,59 @@ function BuscarView() {
 // ==================== PEDIDO VIEW ====================
 function PedidoView() {
   const { pedidoItems, removeItem, updateItem, clearPedido, getTotalPedido, setCurrentView, mayoristaActivo, user, clienteActivo, descuentoGlobal, logo } = useMayolistaStore();
-  const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState(false);
   const [nombreCliente, setNombreCliente] = useState((clienteActivo as any)?.nombre || "");
   const [direccionCliente, setDireccionCliente] = useState((clienteActivo as any)?.direccion || "");
   const total = getTotalPedido();
 
-  // Guarda el pedido en la DB (solo una vez). Devuelve true si ok.
-  const guardarPedido = async (): Promise<boolean> => {
-    if (guardado) return true;
-    setGuardando(true);
-    try {
-      let clienteId: string | null = null;
-      if (nombreCliente.trim()) {
-        const cRes = await fetch("/api/clientes", { headers: authHeaders() });
-        if (cRes.ok) {
-          const lista = await cRes.json();
-          const existente = lista.find((c: any) =>
-            c.nombre.toLowerCase().trim() === nombreCliente.toLowerCase().trim()
-          );
-          if (existente) {
-            clienteId = existente.id;
-          } else {
-            const cCreate = await fetch("/api/clientes", {
-              method: "POST",
-              headers: authHeaders({ "Content-Type": "application/json" }),
-              body: JSON.stringify({ nombre: nombreCliente.trim(), direccion: direccionCliente.trim() || undefined }),
-            });
-            if (cCreate.ok) { const c = await cCreate.json(); clienteId = c.id; }
+  // Guarda en DB en segundo plano — no bloquea el share
+  const guardarEnBackground = () => {
+    if (guardado) return;
+    setGuardado(true);
+    (async () => {
+      try {
+        let clienteId: string | null = null;
+        if (nombreCliente.trim()) {
+          const cRes = await fetch("/api/clientes", { headers: authHeaders() });
+          if (cRes.ok) {
+            const lista = await cRes.json();
+            const existente = lista.find((c: any) => c.nombre.toLowerCase().trim() === nombreCliente.toLowerCase().trim());
+            if (existente) { clienteId = existente.id; }
+            else {
+              const cCreate = await fetch("/api/clientes", {
+                method: "POST",
+                headers: authHeaders({ "Content-Type": "application/json" }),
+                body: JSON.stringify({ nombre: nombreCliente.trim(), direccion: direccionCliente.trim() || undefined }),
+              });
+              if (cCreate.ok) { const c = await cCreate.json(); clienteId = c.id; }
+            }
           }
         }
-      }
-      const res = await fetch("/api/pedidos", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({
-          mayoristaId: mayoristaActivo?.id,
-          clienteId,
-          descuentoPct: descuentoGlobal,
-          observaciones: direccionCliente.trim() || undefined,
-          items: pedidoItems.map((i) => ({
-            productoId: i.productoId, cantidad: i.cantidad,
-            cantidadRegalo: i.cantidadRegalo, descuentoPct: i.descuentoPct, precioUnitario: i.precioUnitario,
-          })),
-        }),
-      });
-      if (res.ok) {
-        setGuardado(true);
-        track("pedido_confirmado", { comercio: mayoristaActivo?.nombre ?? "", items: pedidoItems.length, total: getTotalPedido() });
-        return true;
-      } else {
-        toast.error("No se pudo guardar el pedido");
-        return false;
-      }
-    } catch {
-      toast.error("Error de conexión");
-      return false;
-    } finally {
-      setGuardando(false);
-    }
+        const res = await fetch("/api/pedidos", {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({
+            mayoristaId: mayoristaActivo?.id,
+            clienteId,
+            descuentoPct: descuentoGlobal,
+            observaciones: direccionCliente.trim() || undefined,
+            items: pedidoItems.map((i) => ({
+              productoId: i.productoId, cantidad: i.cantidad,
+              cantidadRegalo: i.cantidadRegalo, descuentoPct: i.descuentoPct, precioUnitario: i.precioUnitario,
+            })),
+          }),
+        });
+        if (res.ok) {
+          track("pedido_confirmado", { comercio: mayoristaActivo?.nombre ?? "", items: pedidoItems.length, total: getTotalPedido() });
+          toast.success("Pedido guardado en historial");
+        }
+      } catch { /* falla silencioso — el share ya salió */ }
+    })();
   };
 
   const handleWhatsApp = async () => {
     if (!pedidoItems.length) return;
-    const ok = await guardarPedido();
-    if (!ok) return;
+    guardarEnBackground();
     const lineas = pedidoItems.map((i) => {
       const subtotal = i.precioUnitario * i.cantidad * (1 - i.descuentoPct / 100);
       const extras = [
@@ -1349,8 +1337,7 @@ function PedidoView() {
 
   const handleEmail = async () => {
     if (!pedidoItems.length) return;
-    const ok = await guardarPedido();
-    if (!ok) return;
+    guardarEnBackground();
     const asunto = `Pedido ${mayoristaActivo?.nombre || "Comercio"}${nombreCliente ? ` — ${nombreCliente}` : ""} — ${new Date().toLocaleDateString("es-AR")}`;
     const clienteInfo = nombreCliente ? `Cliente: ${nombreCliente}${direccionCliente ? `\nDirección: ${direccionCliente}` : ""}\n` : "";
     const cuerpo = `${clienteInfo}Vendedor: ${(user as any)?.name || ""}\nFecha: ${new Date().toLocaleDateString("es-AR")}\n\n` +
@@ -1364,8 +1351,7 @@ function PedidoView() {
 
   const handlePDF = async () => {
     if (!pedidoItems.length) return;
-    const ok = await guardarPedido();
-    if (!ok) return;
+    guardarEnBackground();
     const fecha = new Date().toLocaleDateString("es-AR");
     const comercioNombre = mayoristaActivo?.nombre || "Comercio";
     const vendedorNombre = (user as any)?.name || "";
@@ -1473,8 +1459,8 @@ function PedidoView() {
   };
 
   const handleExcelPedido = async () => {
-    const ok = await guardarPedido();
-    if (!ok) return;
+    if (!pedidoItems.length) return;
+    guardarEnBackground();
     const XLSX = await import("xlsx");
     const fecha = new Date().toLocaleDateString("es-AR");
     const comercioNombre = mayoristaActivo?.nombre || "comercio";
@@ -1632,23 +1618,23 @@ function PedidoView() {
         </div>
         {/* Exportar */}
         <div className="grid grid-cols-4 gap-2">
-          <button onClick={handleWhatsApp} disabled={guardando}
+          <button onClick={handleWhatsApp} disabled={false}
             className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-green-600 text-white font-semibold text-xs hover:bg-green-700 transition-colors disabled:opacity-60">
-            {guardando ? <Loader2 className="w-4 h-4 animate-spin" /> : (
+            {(
               <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.121 1.532 5.856L.054 23.077a.75.75 0 0 0 .869.869l5.221-1.478A11.955 11.955 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-1.891 0-3.667-.523-5.184-1.434l-.372-.22-3.853 1.092 1.092-3.853-.22-.372A9.956 9.956 0 0 1 2 12C2 6.477 6.477 2 12 2s10 4.477 10 10-4.477 10-10 10z"/></svg>
             )} WhatsApp
           </button>
-          <button onClick={handlePDF} disabled={guardando}
+          <button onClick={handlePDF} disabled={false}
             className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-red-500 text-white font-semibold text-xs hover:bg-red-600 transition-colors disabled:opacity-60">
-            {guardando ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />} PDF
+            {<FileSpreadsheet className="w-4 h-4" />} PDF
           </button>
-          <button onClick={handleExcelPedido} disabled={guardando}
+          <button onClick={handleExcelPedido} disabled={false}
             className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-emerald-600 text-white font-semibold text-xs hover:bg-emerald-700 transition-colors disabled:opacity-60">
-            {guardando ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />} Excel
+            {<FileSpreadsheet className="w-4 h-4" />} Excel
           </button>
-          <button onClick={handleEmail} disabled={guardando}
+          <button onClick={handleEmail} disabled={false}
             className="flex flex-col items-center gap-1 py-2.5 rounded-xl bg-blue-500 text-white font-semibold text-xs hover:bg-blue-600 transition-colors disabled:opacity-60">
-            {guardando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Email
+            <Send className="w-4 h-4" /> Email
           </button>
         </div>
         {guardado && (
