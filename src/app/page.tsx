@@ -607,13 +607,29 @@ function MayoristaView() {
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    if (f.size > 2 * 1024 * 1024) { toast.error("El logo no puede superar 2MB"); return; }
+    // Comprimir y redimensionar antes de guardar como base64
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const base64 = ev.target?.result as string;
-      setLogo(base64);
-      toast.success("Logo guardado");
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 300;
+        const scale = Math.min(MAX / img.width, MAX / img.height, 1);
+        const w = Math.round(img.width * scale);
+        const h = Math.round(img.height * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        ctx.drawImage(img, 0, 0, w, h);
+        const base64 = canvas.toDataURL("image/jpeg", 0.85);
+        setLogo(base64);
+        toast.success("Logo guardado");
+      };
+      img.onerror = () => toast.error("No se pudo leer la imagen");
+      img.src = ev.target?.result as string;
     };
+    reader.onerror = () => toast.error("Error al leer el archivo");
     reader.readAsDataURL(f);
   };
 
@@ -813,7 +829,7 @@ function MayoristaView() {
             <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 group-active:opacity-100 flex items-center justify-center transition-opacity">
               <Upload className="w-5 h-5 text-white" />
             </div>
-            <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+            <input ref={logoInputRef} type="file" accept="image/*,image/jpeg,image/png,image/webp,image/heic" onChange={handleLogoUpload} className="hidden" />
           </div>
           <div className="flex-1 min-w-0">
             <p className="font-bold text-lg truncate">{mayoristaActivo.nombre}</p>
@@ -940,7 +956,7 @@ function MayoristaView() {
                 <Upload className="w-6 h-6 text-muted-foreground" />
               </div>
             )}
-            <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+            <input ref={logoInputRef} type="file" accept="image/*,image/jpeg,image/png,image/webp,image/heic" onChange={handleLogoUpload} className="hidden" />
           </div>
           <div className="text-sm text-muted-foreground">
             {logo ? (
